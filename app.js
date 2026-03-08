@@ -5,9 +5,11 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '4.0';
+const APP_VERSION = '4.1';
 const RENDER_QUALITY_STORAGE_KEY = 'pipi-reader-render-quality';
 const INITIAL_PAGE_BATCH = 5;
+const MOBILE_INITIAL_PAGE_BATCH = 3;
+const WARMUP_DELAY_MS = 220;
 const QUALITY_PRESETS = {
   standard: { multiplier: 1.45, maxOutputScale: 2.6, maxCssWidth: 900, label: 'Standard' },
   high: { multiplier: 2.0, maxOutputScale: 3.6, maxCssWidth: 1024, label: 'Haute' },
@@ -27,6 +29,13 @@ const state = {
     mode: 'images',
     activeSourceUrl: '',
     quality: getSavedRenderQuality(),
+    pdfDocument: null,
+    observer: null,
+    pageMeta: [],
+    renderedPages: new Set(),
+    renderingPages: new Set(),
+    warmupTimer: 0,
+    lastScrollTop: 0,
   },
   proxyUrl: '',
   coverJobs: new Map(),
@@ -301,7 +310,10 @@ function bindEvents() {
       elements.readerNotice.textContent = `${chapter.title} — lecteur PDF natif chargé.`;
     }
   });
+
+  elements.readerStage?.addEventListener('scroll', debounce(handleReaderStageScroll, 24), { passive: true });
 }
+
 
 async function handleFiles(fileList) {
   const files = Array.from(fileList || []);
@@ -850,6 +862,7 @@ function openChapterInReader(bookId, chapterId, replace = false) {
 
 function closeReader(replaceOnly = false) {
   state.reader.renderToken += 1;
+  cleanupReaderRuntime();
   if (replaceOnly) {
     history.replaceState(null, '', '#');
   } else if (location.hash.startsWith('#reader')) {
@@ -862,6 +875,7 @@ function syncRoute() {
   const route = parseRoute();
 
   if (route.mode !== 'reader') {
+    cleanupReaderRuntime();
     document.body.classList.remove('reader-mode');
     elements.homeShell.classList.remove('hidden');
     elements.readerShell.classList.add('hidden');
@@ -875,6 +889,7 @@ function syncRoute() {
   const chapter = book?.chapters?.find((entry) => entry.id === route.chapterId);
 
   if (!book || !chapter) {
+    cleanupReaderRuntime();
     document.body.classList.remove('reader-mode');
     elements.homeShell.classList.remove('hidden');
     elements.readerShell.classList.add('hidden');
@@ -977,8 +992,11 @@ async function renderReader() {
 }
 
 async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
-  const token = ++state.reader.renderToken;
+  state.reader.renderToken += 1;
+  const token = state.reader.renderToken;
+  cleanupReaderRuntime();
   state.reader.mode = 'images';
+  state.reader.lastScrollTop = 0;
   setReaderModeUi('images');
   elements.readerFallback.classList.add('hidden');
   elements.readerNativeMode.classList.add('hidden');
@@ -1008,84 +1026,196 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
     return;
   }
 
+  state.reader.pdfDocument = pdfDocument;
+  state.reader.pageMeta = [];
+  state.reader.renderedPages = new Set();
+  state.reader.renderingPages = new Set();
+
   const preset = getRenderPreset(state.reader.quality);
-  const stageWidth = Math.max(320, Math.min(preset.maxCssWidth, elements.readerStage.clientWidth - 40));
-  const targetWidth = stageWidth;
+  const stagePadding = state.ui.isMobile ? 20 : 40;
+  const stageWidth = Math.max(280, Math.min(preset.maxCssWidth, elements.readerStage.clientWidth - stagePadding));
+  const targetWidth = state.ui.isMobile ? Math.min(stageWidth, Math.round(window.innerWidth * 0.92)) : stageWidth;
   const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
-  const outputScale = Math.max(1.45, Math.min(preset.maxOutputScale, deviceRatio * preset.multiplier));
-  const initialBatchCount = Math.min(INITIAL_PAGE_BATCH, pdfDocument.numPages);
+  const outputScale = Math.max(1.35, Math.min(preset.maxOutputScale, deviceRatio * preset.multiplier));
+  const initialBatchCount = Math.min(state.ui.isMobile ? MOBILE_INITIAL_PAGE_BATCH : INITIAL_PAGE_BATCH, pdfDocument.numPages);
+
   let firstBatchShown = false;
 
   for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
     if (token !== state.reader.renderToken) {
-      try { await pdfDocument.destroy(); } catch {}
+      cleanupReaderRuntime();
       return;
     }
 
-    const isInitialBatch = pageNumber <= initialBatchCount;
-    updateLoaderText(isInitialBatch
-      ? `Préchargement des pages ${pageNumber} / ${initialBatchCount}…`
-      : `Chargement progressif ${pageNumber} / ${pdfDocument.numPages}…`);
+    updateLoaderText(pageNumber <= initialBatchCount
+      ? `Préchargement ${pageNumber} / ${initialBatchCount}…`
+      : `Préparation du scroll ${pageNumber} / ${pdfDocument.numPages}…`);
 
     const page = await pdfDocument.getPage(pageNumber);
     const baseViewport = page.getViewport({ scale: 1 });
     const cssScale = targetWidth / baseViewport.width;
     const cssWidth = Math.floor(baseViewport.width * cssScale);
     const cssHeight = Math.floor(baseViewport.height * cssScale);
-    const viewport = page.getViewport({ scale: cssScale * outputScale });
+    const renderScale = cssScale * outputScale;
+    page.cleanup();
 
-    const wrapper = document.createElement('section');
-    wrapper.className = 'reader-page';
-    wrapper.dataset.page = String(pageNumber);
-    wrapper.style.width = `${cssWidth}px`;
+    const meta = { pageNumber, cssWidth, cssHeight, renderScale };
+    state.reader.pageMeta.push(meta);
+    elements.readerCanvasStack.appendChild(createReaderPageSkeleton(meta));
 
-    const canvas = document.createElement('canvas');
-    canvas.className = 'reader-page-canvas';
+    if (pageNumber <= initialBatchCount) {
+      await renderReaderPage(meta, token);
+      if (pageNumber === initialBatchCount) {
+        firstBatchShown = true;
+        elements.readerLoader.classList.add('hidden');
+        elements.readerCanvasStack.classList.remove('hidden');
+        elements.readerNotice.textContent = `${book.title} — ${chapter.title} — ${initialBatchCount} pages prêtes. Le reste arrive progressivement pendant le scroll.`;
+        setStatus(`${chapter.title} : ${initialBatchCount}/${pdfDocument.numPages} pages prêtes.`);
+        await nextPaint();
+      }
+    } else if (firstBatchShown && pageNumber % 4 === 0) {
+      await nextPaint();
+    }
+  }
+
+  if (token !== state.reader.renderToken) {
+    cleanupReaderRuntime();
+    return;
+  }
+
+  elements.readerLoader.classList.add('hidden');
+  elements.readerCanvasStack.classList.remove('hidden');
+  setupReaderObserver(token);
+  scheduleWarmupRenders(token, initialBatchCount + 1);
+  elements.readerNotice.textContent = `${book.title} — ${chapter.title} — lecture mobile optimisée active. ${sourceText}`;
+  setStatus(`${chapter.title} : mode pages intégrées optimisé.`);
+}
+
+function createReaderPageSkeleton(meta) {
+  const wrapper = document.createElement('section');
+  wrapper.className = 'reader-page reader-page-pending';
+  wrapper.dataset.page = String(meta.pageNumber);
+  wrapper.style.width = `${meta.cssWidth}px`;
+  wrapper.style.minHeight = `${meta.cssHeight}px`;
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'reader-page-placeholder';
+  placeholder.innerHTML = `<span>Page ${meta.pageNumber}</span>`;
+  wrapper.appendChild(placeholder);
+  return wrapper;
+}
+
+async function renderReaderPage(meta, token = state.reader.renderToken) {
+  if (!meta || token !== state.reader.renderToken || !state.reader.pdfDocument) return;
+  if (state.reader.renderedPages.has(meta.pageNumber) || state.reader.renderingPages.has(meta.pageNumber)) return;
+
+  const wrapper = elements.readerCanvasStack.querySelector(`[data-page="${meta.pageNumber}"]`);
+  if (!wrapper) return;
+
+  state.reader.renderingPages.add(meta.pageNumber);
+
+  try {
+    const page = await state.reader.pdfDocument.getPage(meta.pageNumber);
+    if (token !== state.reader.renderToken) {
+      page.cleanup();
+      return;
+    }
+
+    const viewport = page.getViewport({ scale: meta.renderScale });
+    let canvas = wrapper.querySelector('canvas');
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.className = 'reader-page-canvas';
+      wrapper.appendChild(canvas);
+    }
+
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
-    canvas.style.width = `${cssWidth}px`;
-    canvas.style.height = `${cssHeight}px`;
-    wrapper.appendChild(canvas);
+    canvas.style.width = `${meta.cssWidth}px`;
+    canvas.style.height = `${meta.cssHeight}px`;
 
-    elements.readerCanvasStack.appendChild(wrapper);
-
-    const context = canvas.getContext('2d', { alpha: false });
+    const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
+
     await page.render({
       canvasContext: context,
       viewport,
       intent: 'display',
       annotationMode: pdfjsLib.AnnotationMode.DISABLE,
     }).promise;
+
     page.cleanup();
+    wrapper.querySelector('.reader-page-placeholder')?.remove();
+    wrapper.classList.remove('reader-page-pending');
+    state.reader.renderedPages.add(meta.pageNumber);
+  } finally {
+    state.reader.renderingPages.delete(meta.pageNumber);
+  }
+}
 
-    if (!firstBatchShown && pageNumber >= initialBatchCount) {
-      firstBatchShown = true;
-      elements.readerLoader.classList.add('hidden');
-      elements.readerCanvasStack.classList.remove('hidden');
-      elements.readerNotice.textContent = `${book.title} — ${chapter.title} — ${initialBatchCount} premières pages prêtes, le reste arrive progressivement. ${sourceText}`;
-      setStatus(`${chapter.title} : ${initialBatchCount}/${pdfDocument.numPages} pages prêtes.`);
-      await nextPaint();
-    } else if (firstBatchShown) {
-      setStatus(`${chapter.title} : rendu progressif ${pageNumber}/${pdfDocument.numPages}.`);
-      await nextPaint();
+function setupReaderObserver(token) {
+  if (state.reader.observer) {
+    state.reader.observer.disconnect();
+  }
+
+  const rootMargin = state.ui.isMobile ? '1400px 0px 1400px 0px' : '1800px 0px 1800px 0px';
+  state.reader.observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const pageNumber = Number(entry.target.dataset.page || 0);
+      const meta = state.reader.pageMeta[pageNumber - 1];
+      if (meta) {
+        void renderReaderPage(meta, token);
+      }
     }
+  }, { root: elements.readerStage, rootMargin, threshold: 0.01 });
+
+  for (const wrapper of elements.readerCanvasStack.querySelectorAll('.reader-page')) {
+    state.reader.observer.observe(wrapper);
+  }
+}
+
+function scheduleWarmupRenders(token, startPage = 1) {
+  window.clearTimeout(state.reader.warmupTimer);
+
+  const step = async (pageNumber) => {
+    if (token !== state.reader.renderToken || !state.reader.pdfDocument) return;
+    const nextMeta = state.reader.pageMeta[pageNumber - 1];
+    if (!nextMeta) return;
+    if (!state.reader.renderedPages.has(pageNumber)) {
+      await renderReaderPage(nextMeta, token);
+      if (token !== state.reader.renderToken) return;
+      setStatus(`Rendu progressif : ${Math.min(state.reader.renderedPages.size, state.reader.pageMeta.length)}/${state.reader.pageMeta.length} pages.`);
+    }
+    state.reader.warmupTimer = window.setTimeout(() => step(pageNumber + 1), WARMUP_DELAY_MS);
+  };
+
+  state.reader.warmupTimer = window.setTimeout(() => step(startPage), 120);
+}
+
+function cleanupReaderRuntime() {
+  window.clearTimeout(state.reader.warmupTimer);
+  state.reader.warmupTimer = 0;
+
+  if (state.reader.observer) {
+    state.reader.observer.disconnect();
+    state.reader.observer = null;
   }
 
-  if (token !== state.reader.renderToken) {
-    try { await pdfDocument.destroy(); } catch {}
-    return;
-  }
+  state.reader.pageMeta = [];
+  state.reader.renderedPages = new Set();
+  state.reader.renderingPages = new Set();
+  state.reader.lastScrollTop = 0;
 
-  elements.readerLoader.classList.add('hidden');
-  elements.readerCanvasStack.classList.remove('hidden');
-  elements.readerNotice.textContent = `${book.title} — ${chapter.title} — pages intégrées chargées. ${sourceText}`;
-  setStatus(`${chapter.title} : ${pdfDocument.numPages} pages chargées.`);
-  try { await pdfDocument.destroy(); } catch {}
+  if (state.reader.pdfDocument) {
+    try { state.reader.pdfDocument.destroy(); } catch {}
+    state.reader.pdfDocument = null;
+  }
 }
 
 function showNativeReader(sourceUrl, notice) {
+  cleanupReaderRuntime();
   state.reader.mode = 'native';
   setReaderModeUi('native');
   elements.readerImageMode.classList.add('hidden');
@@ -1097,6 +1227,7 @@ function showNativeReader(sourceUrl, notice) {
 }
 
 function showReaderFallback(message = '') {
+  cleanupReaderRuntime();
   elements.readerImageMode.classList.add('hidden');
   elements.readerNativeMode.classList.add('hidden');
   elements.readerLoader.classList.add('hidden');
@@ -1423,13 +1554,13 @@ function renderResponsiveUi() {
   const activeBook = getActiveBook();
 
   elements.readerMoreBtn?.classList.toggle('hidden', !state.ui.isMobile || !isReaderOpen);
-  elements.readerActionPanel?.classList.toggle('open', state.ui.isMobile && state.ui.controlsOpen && isReaderOpen);
-  elements.readerMobileDock?.classList.toggle('hidden', !state.ui.isMobile || !isReaderOpen);
+  elements.readerShell.classList.toggle('mobile-options-open', state.ui.isMobile && state.ui.controlsOpen && isReaderOpen);
   elements.readerShell.classList.toggle('reader-ui-hidden', state.ui.isMobile && state.ui.uiHidden && isReaderOpen);
+  elements.readerMobileDock?.classList.add('hidden');
 
   if (elements.readerMoreBtn) {
     elements.readerMoreBtn.setAttribute('aria-expanded', String(Boolean(state.ui.controlsOpen && state.ui.isMobile && isReaderOpen)));
-    elements.readerMoreBtn.textContent = state.ui.controlsOpen ? 'Fermer' : 'Options';
+    elements.readerMoreBtn.textContent = state.ui.controlsOpen ? 'Moins' : 'Plus';
   }
 
   if (elements.mobileModeBtn) {
@@ -1440,6 +1571,31 @@ function renderResponsiveUi() {
   if (elements.mobileUiBtn) {
     elements.mobileUiBtn.textContent = state.ui.uiHidden ? 'Afficher UI' : 'Masquer UI';
   }
+}
+
+function handleReaderStageScroll() {
+  if (!state.ui.isMobile || elements.readerShell.classList.contains('hidden')) return;
+
+  const currentTop = elements.readerStage.scrollTop;
+  const previousTop = state.reader.lastScrollTop || 0;
+  const delta = currentTop - previousTop;
+
+  if (Math.abs(delta) < 22) return;
+
+  if (delta > 0 && currentTop > 80) {
+    if (!state.ui.uiHidden) {
+      state.ui.uiHidden = true;
+      state.ui.controlsOpen = false;
+      renderResponsiveUi();
+    }
+  } else if (delta < 0) {
+    if (state.ui.uiHidden) {
+      state.ui.uiHidden = false;
+      renderResponsiveUi();
+    }
+  }
+
+  state.reader.lastScrollTop = currentTop;
 }
 
 function normalizeKey(value) {
