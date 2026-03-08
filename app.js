@@ -1,7 +1,7 @@
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 
 const state = {
   books: [],
@@ -490,7 +490,7 @@ function renderChapters(book) {
       remoteBtn.addEventListener('click', async () => {
         state.activeChapterId = chapter.id;
         renderChapters(book);
-        await renderPdf(buildRemotePdfSource(`${book.title} — ${chapter.title}`, chapter.url));
+        await openRemoteChapter(`${book.title} — ${chapter.title}`, chapter.url);
       });
       actions.appendChild(remoteBtn);
 
@@ -526,31 +526,95 @@ function renderUnsupportedProtectedView(book) {
 }
 
 function buildRemotePdfSource(label, rawUrl) {
+  const urls = buildRemoteCandidates(rawUrl);
   return {
     type: 'url',
     label,
     url: rawUrl,
-    urls: buildRemoteCandidates(rawUrl),
+    urls,
+    bestInlineUrl: urls[0] || rawUrl,
+    googleViewerUrl: buildGoogleViewerUrl(urls[0] || rawUrl),
   };
 }
 
+async function openRemoteChapter(label, rawUrl) {
+  const source = buildRemotePdfSource(label, rawUrl);
+  state.activeSource = source;
+  renderRemoteBrowserView(source);
+}
+
+function renderRemoteBrowserView(source) {
+  elements.viewer.className = 'viewer';
+  elements.viewer.innerHTML = `
+    <div class="remote-reader-card">
+      <div class="remote-reader-header">
+        <div>
+          <h4>${escapeHtml(source.label)}</h4>
+          <p class="small-note">Lecture distante via visualiseur navigateur. Si le site source bloque le rendu intégré, ouvre le lien direct ou le lecteur de secours.</p>
+        </div>
+        <div class="remote-toolbar">
+          <a class="primary-btn" href="${escapeAttribute(source.bestInlineUrl)}" target="_blank" rel="noopener noreferrer">Ouvrir directement</a>
+          <a class="secondary-btn" href="${escapeAttribute(source.googleViewerUrl)}" target="_blank" rel="noopener noreferrer">Lecteur secours</a>
+          <button id="tryPdfJsBtn" class="ghost-btn" type="button">Essayer PDF.js</button>
+        </div>
+      </div>
+      <iframe class="remote-frame" src="${escapeAttribute(source.bestInlineUrl)}" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>
+      <div class="remote-note">
+        <strong>Astuce :</strong> sur GitHub Pages, les PDF distants Dropbox passent souvent mieux via un lien direct ou un iframe qu’avec PDF.js.
+      </div>
+    </div>
+  `;
+
+  const tryPdfJsBtn = document.getElementById('tryPdfJsBtn');
+  if (tryPdfJsBtn) {
+    tryPdfJsBtn.addEventListener('click', async () => {
+      await renderPdf(source);
+    });
+  }
+
+  setStatus(`${source.label} — vue distante chargée.`);
+}
+
+function buildGoogleViewerUrl(rawUrl) {
+  return `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(rawUrl)}`;
+}
+
 function buildRemoteCandidates(rawUrl) {
-  const candidates = [rawUrl];
+  const candidates = [];
 
   try {
     const parsed = new URL(rawUrl);
-    if (parsed.hostname.includes('dropbox.com')) {
-      const directDownload = new URL(parsed.toString());
-      directDownload.searchParams.set('dl', '1');
-      candidates.push(directDownload.toString());
+    const host = parsed.hostname.toLowerCase();
+
+    const pushVariant = (url) => {
+      if (url && !candidates.includes(url)) candidates.push(url);
+    };
+
+    const preferred = new URL(parsed.toString());
+    preferred.searchParams.set('dl', '1');
+    preferred.searchParams.delete('raw');
+
+    if (host === 'www.dropbox.com' || host === 'dl.dropbox.com' || host === 'dropbox.com') {
+      const userContent = new URL(preferred.toString());
+      userContent.hostname = 'dl.dropboxusercontent.com';
+      pushVariant(userContent.toString());
+
+      const dlHost = new URL(preferred.toString());
+      dlHost.hostname = 'dl.dropbox.com';
+      pushVariant(dlHost.toString());
 
       const rawVariant = new URL(parsed.toString());
+      rawVariant.hostname = 'www.dropbox.com';
       rawVariant.searchParams.delete('dl');
       rawVariant.searchParams.set('raw', '1');
-      candidates.push(rawVariant.toString());
+      pushVariant(rawVariant.toString());
     }
+
+    pushVariant(preferred.toString());
+    pushVariant(parsed.toString());
   } catch (error) {
     console.warn('Impossible de construire des variantes d’URL', error);
+    if (rawUrl) candidates.push(rawUrl);
   }
 
   return Array.from(new Set(candidates.filter(Boolean)));

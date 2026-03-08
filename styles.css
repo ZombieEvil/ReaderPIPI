@@ -509,3 +509,84 @@ input[type="range"] {
   font-size: 0.78rem;
   font-weight: 700;
 }
+
+
+.version-badge {
+  display: inline-flex;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(124, 156, 255, 0.14);
+  color: var(--accent-2);
+  border: 1px solid rgba(124, 156, 255, 0.22);
+  font-size: 0.78rem;
+}
+
+.secondary-btn {
+  border: 1px solid rgba(124, 156, 255, 0.28);
+  background: rgba(124, 156, 255, 0.1);
+  color: var(--text);
+}
+
+.remote-reader-card {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(25, 35, 68, 0.95), rgba(16, 24, 48, 0.95));
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.remote-reader-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.remote-reader-header h4 {
+  margin: 0 0 8px;
+}
+
+.remote-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.remote-frame {
+  width: 100%;
+  min-height: 78vh;
+  border: 0;
+  background: #0a0f1d;
+}
+
+.remote-note {
+  padding: 14px 18px 18px;
+  color: var(--muted);
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: relative;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .topbar,
+  .remote-reader-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .remote-frame {
+    min-height: 68vh;
+  }
+}
