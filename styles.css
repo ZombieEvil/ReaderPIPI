@@ -353,6 +353,68 @@ a {
   font-size: 0.98rem;
 }
 
+
+.book-meta-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.book-cover-card {
+  min-width: 0;
+}
+
+.book-cover-frame {
+  position: sticky;
+  top: 18px;
+  min-height: 340px;
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.03);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.24);
+}
+
+.book-cover-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4.2;
+  object-fit: cover;
+  background: rgba(255,255,255,0.02);
+}
+
+.book-cover-loading,
+.book-cover-empty {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  padding: 24px;
+  min-height: 340px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.book-cover-empty-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.book-cover-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 3px solid rgba(123, 195, 255, 0.18);
+  border-top-color: rgba(123, 195, 255, 1);
+  animation: spin 0.9s linear infinite;
+}
+
 .chapter-panel {
   margin-bottom: 18px;
 }
@@ -728,6 +790,15 @@ button:hover,
 
   .topbar {
     flex-direction: column;
+  }
+
+  .book-meta-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .book-cover-frame {
+    position: static;
+    min-height: 280px;
   }
 
   .meta-grid {

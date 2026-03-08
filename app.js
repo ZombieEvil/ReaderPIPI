@@ -5,7 +5,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.4.1';
 const RENDER_QUALITY_STORAGE_KEY = 'pipi-reader-render-quality';
 const INITIAL_PAGE_BATCH = 5;
 const QUALITY_PRESETS = {
@@ -29,6 +29,7 @@ const state = {
     quality: getSavedRenderQuality(),
   },
   proxyUrl: '',
+  coverJobs: new Map(),
 };
 
 const elements = {
@@ -542,17 +543,174 @@ function renderMeta(book) {
     return;
   }
 
+  const coverMarkup = renderBookCoverMarkup(book);
+
   elements.bookMeta.classList.remove('hidden');
   elements.bookMeta.innerHTML = `
-    <dl class="meta-grid">
-      <div><dt>Titre</dt><dd>${escapeHtml(book.meta.title || book.title)}</dd></div>
-      <div><dt>Description</dt><dd>${escapeHtml(book.meta.description || 'Aucune')}</dd></div>
-      <div><dt>Auteur</dt><dd>${escapeHtml(book.meta.author || 'Inconnu')}</dd></div>
-      <div><dt>Artiste</dt><dd>${escapeHtml(book.meta.artist || 'Inconnu')}</dd></div>
-      <div><dt>Statut</dt><dd>${escapeHtml(book.meta.status || 'Inconnu')}</dd></div>
-      <div><dt>Langue</dt><dd>${escapeHtml(book.meta.language || 'Inconnue')}</dd></div>
-    </dl>
+    <div class="book-meta-layout">
+      ${coverMarkup}
+      <dl class="meta-grid">
+        <div><dt>Titre</dt><dd>${escapeHtml(book.meta.title || book.title)}</dd></div>
+        <div><dt>Description</dt><dd>${escapeHtml(book.meta.description || 'Aucune')}</dd></div>
+        <div><dt>Auteur</dt><dd>${escapeHtml(book.meta.author || 'Inconnu')}</dd></div>
+        <div><dt>Artiste</dt><dd>${escapeHtml(book.meta.artist || 'Inconnu')}</dd></div>
+        <div><dt>Statut</dt><dd>${escapeHtml(book.meta.status || 'Inconnu')}</dd></div>
+        <div><dt>Langue</dt><dd>${escapeHtml(book.meta.language || 'Inconnue')}</dd></div>
+      </dl>
+    </div>
   `;
+
+  void hydrateBookCover(book);
+}
+
+function renderBookCoverMarkup(book) {
+  const src = getResolvedBookCover(book);
+  const title = book.meta?.title || book.title;
+
+  if (src) {
+    return `
+      <div class="book-cover-card">
+        <div class="book-cover-frame">
+          <img class="book-cover-image" src="${escapeAttribute(src)}" alt="Couverture de ${escapeAttribute(title)}" loading="lazy" />
+        </div>
+      </div>
+    `;
+  }
+
+  if (book.coverState === 'missing') {
+    return `
+      <div class="book-cover-card">
+        <div class="book-cover-frame book-cover-empty">
+          <span class="book-cover-empty-title">${escapeHtml(title)}</span>
+          <small>Aperçu indisponible</small>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="book-cover-card">
+      <div class="book-cover-frame book-cover-loading">
+        <span class="book-cover-spinner"></span>
+        <small>Chargement de l’image…</small>
+      </div>
+    </div>
+  `;
+}
+
+function getResolvedBookCover(book) {
+  return book.coverThumbUrl || normalizeCoverAssetUrl(book.meta?.coverUrl || '') || '';
+}
+
+async function hydrateBookCover(book) {
+  if (!book || !elements.bookMeta || elements.bookMeta.classList.contains('hidden')) return;
+  if (book.coverState === 'ready' || book.coverState === 'missing') return;
+
+  const staticCover = normalizeCoverAssetUrl(book.meta?.coverUrl || '');
+  if (staticCover) {
+    book.coverState = 'ready';
+    if (getActiveBook()?.id === book.id) renderMeta(book);
+    return;
+  }
+
+  const existingJob = state.coverJobs.get(book.id);
+  if (existingJob) {
+    await existingJob;
+    return;
+  }
+
+  book.coverState = 'loading';
+  const job = buildBookCoverThumbnail(book)
+    .then((thumbUrl) => {
+      book.coverThumbUrl = thumbUrl || '';
+      book.coverState = thumbUrl ? 'ready' : 'missing';
+    })
+    .catch((error) => {
+      console.warn('Impossible de générer la couverture', error);
+      book.coverThumbUrl = '';
+      book.coverState = 'missing';
+    })
+    .finally(() => {
+      state.coverJobs.delete(book.id);
+      if (getActiveBook()?.id === book.id) renderMeta(book);
+    });
+
+  state.coverJobs.set(book.id, job);
+  await job;
+}
+
+async function buildBookCoverThumbnail(book) {
+  const firstChapter = book.chapters?.[0];
+  if (!firstChapter) return '';
+
+  const source = getChapterSource(firstChapter);
+  const candidate = source?.integratedCandidates?.[0] || source?.nativeCandidates?.[0] || source?.newTabUrl || '';
+  if (!candidate) return '';
+
+  const loadingTask = pdfjsLib.getDocument({
+    url: candidate,
+    withCredentials: false,
+    enableXfa: false,
+    useWorkerFetch: true,
+  });
+
+  let pdfDocument;
+  try {
+    pdfDocument = await loadingTask.promise;
+    const page = await pdfDocument.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const cssWidth = 280;
+    const cssScale = cssWidth / baseViewport.width;
+    const outputScale = 1.6;
+    const viewport = page.getViewport({ scale: cssScale * outputScale });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+
+    const context = canvas.getContext('2d', { alpha: false });
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+
+    await page.render({
+      canvasContext: context,
+      viewport,
+      intent: 'display',
+      annotationMode: pdfjsLib.AnnotationMode.DISABLE,
+    }).promise;
+
+    page.cleanup();
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    canvas.width = 0;
+    canvas.height = 0;
+    try { await pdfDocument.destroy(); } catch {}
+    return dataUrl;
+  } catch (error) {
+    try { await pdfDocument?.destroy(); } catch {}
+    throw new Error(readablePdfError(error));
+  }
+}
+
+function normalizeCoverAssetUrl(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+
+  try {
+    const parsed = new URL(trimmed, location.href);
+    const host = parsed.hostname.toLowerCase();
+    const isDropbox = ['www.dropbox.com', 'dropbox.com', 'dl.dropbox.com', 'dl.dropboxusercontent.com'].includes(host);
+
+    if (isDropbox) {
+      parsed.hostname = 'dl.dropboxusercontent.com';
+      parsed.searchParams.delete('dl');
+      parsed.searchParams.set('raw', '1');
+    }
+
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
 }
 
 function renderChapters(book) {
