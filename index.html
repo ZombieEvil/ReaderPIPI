@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pipi Reader Web</title>
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
-  <link rel="stylesheet" href="./styles.css?v=3.4.1" />
+  <link rel="stylesheet" href="./styles.css?v=4.0" />
 </head>
 <body>
   <div id="homeShell" class="app-shell">
@@ -15,7 +15,8 @@
         <div>
           <h1>Pipi Reader Web</h1>
           <p>Lecteur .pipi + PDF</p>
-          <span class="version-badge">v3.4.1 couverture affichée</span>
+          <span id="deviceBadge" class="device-badge">Détection…</span>
+          <span class="version-badge">v4.0 adaptive mobile</span>
         </div>
       </div>
 
@@ -95,6 +96,7 @@
     <div class="reader-top">
       <div class="reader-top-left">
         <button id="backToLibraryBtn" class="ghost-btn" type="button">← Retour</button>
+        <button id="readerMoreBtn" class="ghost-btn reader-more-btn" type="button" aria-expanded="false">Options</button>
         <div class="reader-select-wrap">
           <select id="readerChapterSelect" class="reader-select"></select>
         </div>
@@ -118,7 +120,7 @@
         </div>
       </div>
 
-      <div class="reader-top-right">
+      <div id="readerActionPanel" class="reader-top-right">
         <button id="readerPrevBtn" class="secondary-btn reader-nav-btn" type="button">Précédent</button>
         <button id="readerLatestBtn" class="ghost-btn reader-nav-btn" type="button">Dernier chapitre</button>
         <button id="readerNextBtn" class="primary-btn reader-nav-btn" type="button">Suivant</button>
@@ -152,9 +154,15 @@
         </p>
       </div>
     </div>
+    <div id="readerMobileDock" class="reader-mobile-dock hidden" aria-label="Navigation mobile">
+      <button id="mobilePrevBtn" class="ghost-btn" type="button">◀ Chapitre</button>
+      <button id="mobileModeBtn" class="secondary-btn" type="button">Mode</button>
+      <button id="mobileNextBtn" class="primary-btn" type="button">Chapitre ▶</button>
+      <button id="mobileUiBtn" class="outline-btn" type="button">Masquer UI</button>
+    </div>
   </section>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-  <script src="./app.js?v=3.4.1" type="module"></script>
+  <script src="./app.js?v=4.0" type="module"></script>
 </body>
 </html>

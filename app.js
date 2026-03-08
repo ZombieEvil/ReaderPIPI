@@ -5,7 +5,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '3.4.1';
+const APP_VERSION = '4.0';
 const RENDER_QUALITY_STORAGE_KEY = 'pipi-reader-render-quality';
 const INITIAL_PAGE_BATCH = 5;
 const QUALITY_PRESETS = {
@@ -30,6 +30,11 @@ const state = {
   },
   proxyUrl: '',
   coverJobs: new Map(),
+  ui: {
+    isMobile: false,
+    controlsOpen: false,
+    uiHidden: false,
+  },
 };
 
 const elements = {
@@ -51,9 +56,12 @@ const elements = {
   chapterCount: document.getElementById('chapterCount'),
   welcomeCard: document.getElementById('welcomeCard'),
   openLastReaderBtn: document.getElementById('openLastReaderBtn'),
+  deviceBadge: document.getElementById('deviceBadge'),
 
   readerShell: document.getElementById('readerShell'),
   readerChapterSelect: document.getElementById('readerChapterSelect'),
+  readerMoreBtn: document.getElementById('readerMoreBtn'),
+  readerActionPanel: document.getElementById('readerActionPanel'),
   readerLastSelection: document.getElementById('readerLastSelection'),
   readerPrevBtn: document.getElementById('readerPrevBtn'),
   readerLatestBtn: document.getElementById('readerLatestBtn'),
@@ -74,10 +82,16 @@ const elements = {
   readerLoader: document.getElementById('readerLoader'),
   readerLoaderText: document.getElementById('readerLoaderText'),
   readerCanvasStack: document.getElementById('readerCanvasStack'),
+  readerMobileDock: document.getElementById('readerMobileDock'),
+  mobilePrevBtn: document.getElementById('mobilePrevBtn'),
+  mobileModeBtn: document.getElementById('mobileModeBtn'),
+  mobileNextBtn: document.getElementById('mobileNextBtn'),
+  mobileUiBtn: document.getElementById('mobileUiBtn'),
 };
 
 state.proxyUrl = getSavedProxyUrl();
 bindEvents();
+detectDeviceMode();
 renderProxyConfig();
 renderLibrary();
 renderHome();
@@ -167,6 +181,36 @@ function bindEvents() {
     openChapterInReader(activeBook.id, latest.id);
   });
 
+  elements.readerMoreBtn?.addEventListener('click', () => {
+    if (!state.ui.isMobile) return;
+    state.ui.controlsOpen = !state.ui.controlsOpen;
+    renderResponsiveUi();
+  });
+
+  elements.mobilePrevBtn?.addEventListener('click', () => moveReaderChapter(-1));
+  elements.mobileNextBtn?.addEventListener('click', () => moveReaderChapter(1));
+  elements.mobileModeBtn?.addEventListener('click', () => {
+    const book = getActiveBook();
+    if (!book) return;
+    const nextMode = getSavedReaderMode(book) === 'images' ? 'native' : 'images';
+    setSavedReaderMode(book, nextMode);
+    renderReader();
+  });
+  elements.mobileUiBtn?.addEventListener('click', () => {
+    if (!state.ui.isMobile) return;
+    state.ui.uiHidden = !state.ui.uiHidden;
+    renderResponsiveUi();
+  });
+
+  elements.readerStage?.addEventListener('click', (event) => {
+    if (!state.ui.isMobile) return;
+    if (event.target.closest('button, a, select, input, label')) return;
+    if (event.target.closest('#readerActionPanel')) return;
+    state.ui.uiHidden = !state.ui.uiHidden;
+    if (state.ui.uiHidden) state.ui.controlsOpen = false;
+    renderResponsiveUi();
+  });
+
   elements.readerImagesBtn.addEventListener('click', () => {
     const book = getActiveBook();
     if (!book) return;
@@ -237,8 +281,14 @@ function bindEvents() {
   });
 
   window.addEventListener('resize', debounce(() => {
+    const previousMobile = state.ui.isMobile;
+    detectDeviceMode();
     if (!elements.readerShell.classList.contains('hidden') && state.reader.mode === 'images') {
       renderReader();
+      return;
+    }
+    if (previousMobile !== state.ui.isMobile) {
+      renderResponsiveUi();
     }
   }, 250));
 
@@ -815,6 +865,9 @@ function syncRoute() {
     document.body.classList.remove('reader-mode');
     elements.homeShell.classList.remove('hidden');
     elements.readerShell.classList.add('hidden');
+    state.ui.controlsOpen = false;
+    state.ui.uiHidden = false;
+    renderResponsiveUi();
     return;
   }
 
@@ -825,6 +878,9 @@ function syncRoute() {
     document.body.classList.remove('reader-mode');
     elements.homeShell.classList.remove('hidden');
     elements.readerShell.classList.add('hidden');
+    state.ui.controlsOpen = false;
+    state.ui.uiHidden = false;
+    renderResponsiveUi();
     setStatus('Impossible d’ouvrir cette vue lecteur : chapitre ou livre introuvable.');
     return;
   }
@@ -834,6 +890,9 @@ function syncRoute() {
   document.body.classList.add('reader-mode');
   elements.homeShell.classList.add('hidden');
   elements.readerShell.classList.remove('hidden');
+  state.ui.controlsOpen = false;
+  state.ui.uiHidden = false;
+  renderResponsiveUi();
   renderReader();
 }
 
@@ -1069,6 +1128,7 @@ function renderReaderHeader(book, chapter) {
   elements.readerPrevBtn.disabled = index <= 0;
   elements.readerNextBtn.disabled = index >= book.chapters.length - 1;
   elements.readerLatestBtn.disabled = index === book.chapters.length - 1;
+  renderResponsiveUi();
 }
 
 function moveReaderChapter(delta) {
@@ -1338,6 +1398,48 @@ function buildProxiedUrl(proxyBase, targetUrl) {
   const proxyUrl = new URL(base);
   proxyUrl.searchParams.set('url', targetUrl);
   return proxyUrl.toString();
+}
+
+
+function detectDeviceMode() {
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  const narrow = window.matchMedia('(max-width: 920px)').matches;
+  const shortViewport = window.matchMedia('(max-height: 820px)').matches;
+  state.ui.isMobile = narrow || (coarse && (window.innerWidth <= 1100 || shortViewport));
+
+  document.body.classList.toggle('device-mobile', state.ui.isMobile);
+  document.body.classList.toggle('device-desktop', !state.ui.isMobile);
+  document.documentElement.dataset.device = state.ui.isMobile ? 'mobile' : 'desktop';
+
+  if (elements.deviceBadge) {
+    elements.deviceBadge.textContent = state.ui.isMobile ? 'Mode mobile ergonomique' : 'Mode desktop complet';
+  }
+
+  renderResponsiveUi();
+}
+
+function renderResponsiveUi() {
+  const isReaderOpen = !elements.readerShell.classList.contains('hidden');
+  const activeBook = getActiveBook();
+
+  elements.readerMoreBtn?.classList.toggle('hidden', !state.ui.isMobile || !isReaderOpen);
+  elements.readerActionPanel?.classList.toggle('open', state.ui.isMobile && state.ui.controlsOpen && isReaderOpen);
+  elements.readerMobileDock?.classList.toggle('hidden', !state.ui.isMobile || !isReaderOpen);
+  elements.readerShell.classList.toggle('reader-ui-hidden', state.ui.isMobile && state.ui.uiHidden && isReaderOpen);
+
+  if (elements.readerMoreBtn) {
+    elements.readerMoreBtn.setAttribute('aria-expanded', String(Boolean(state.ui.controlsOpen && state.ui.isMobile && isReaderOpen)));
+    elements.readerMoreBtn.textContent = state.ui.controlsOpen ? 'Fermer' : 'Options';
+  }
+
+  if (elements.mobileModeBtn) {
+    const currentMode = activeBook ? getSavedReaderMode(activeBook) : 'images';
+    elements.mobileModeBtn.textContent = currentMode === 'images' ? 'PDF natif' : 'Pages';
+  }
+
+  if (elements.mobileUiBtn) {
+    elements.mobileUiBtn.textContent = state.ui.uiHidden ? 'Afficher UI' : 'Masquer UI';
+  }
 }
 
 function normalizeKey(value) {
