@@ -1,6 +1,7 @@
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
+const APP_VERSION = '2.1.0';
 
 const state = {
   books: [],
@@ -124,7 +125,7 @@ async function handleFiles(fileList) {
   renderBookArea();
 
   if (importedCount > 0) {
-    setStatus(`${importedCount} fichier(s) importé(s).`);
+    setStatus(`${importedCount} fichier(s) importé(s). · moteur ${APP_VERSION}`);
   }
 }
 

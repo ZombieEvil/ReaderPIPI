@@ -496,3 +496,16 @@ input[type="range"] {
     flex: 1;
   }
 }
+
+
+.version-badge {
+  display: inline-flex;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 156, 255, 0.25);
+  background: rgba(124, 156, 255, 0.14);
+  color: var(--accent-2);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
