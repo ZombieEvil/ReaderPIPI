@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pipi Reader Web</title>
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
-  <link rel="stylesheet" href="./styles.css?v=3.1.0" />
+  <link rel="stylesheet" href="./styles.css?v=3.2.0" />
 </head>
 <body>
   <div id="homeShell" class="app-shell">
@@ -15,7 +15,7 @@
         <div>
           <h1>Pipi Reader Web</h1>
           <p>Lecteur .pipi + PDF</p>
-          <span class="version-badge">v3.1 pages intégrées</span>
+          <span class="version-badge">v3.2 proxy PDF + pages intégrées</span>
         </div>
       </div>
 
@@ -28,6 +28,21 @@
       <div id="dropZone" class="drop-zone">
         Glisse-dépose tes fichiers ici
       </div>
+
+      <section class="panel-section">
+        <div class="section-title-row">
+          <h2>Proxy PDF</h2>
+        </div>
+        <p class="small-note">Pour afficher les pages du PDF directement dans le site depuis Dropbox, colle l’URL de ton worker proxy.</p>
+        <div class="proxy-config">
+          <input id="proxyUrlInput" class="proxy-input" type="url" placeholder="https://ton-worker.exemple.workers.dev/" />
+          <div class="proxy-actions">
+            <button id="saveProxyBtn" class="primary-btn" type="button">Enregistrer</button>
+            <button id="clearProxyBtn" class="ghost-btn" type="button">Vider</button>
+          </div>
+          <p id="proxyHint" class="small-note">Sans proxy, les PDFs Dropbox restent bloqués pour le rendu intégré à cause du CORS.</p>
+        </div>
+      </section>
 
       <section class="panel-section">
         <div class="section-title-row">
@@ -65,12 +80,12 @@
       </section>
 
       <section id="welcomeCard" class="placeholder-card">
-        <h3>Nouvelle lecture pages par pages intégrées</h3>
+        <h3>Lecture scan propre</h3>
         <p>
-          Cette version essaie d’afficher les <strong>pages du PDF directement dans le site</strong>, sans les séparations moches du lecteur natif.
+          Cette version peut afficher les <strong>pages du PDF directement dans le site</strong>, collées les unes aux autres, pour un rendu plus proche d’un lecteur de scans.
         </p>
         <p>
-          Si une source distante refuse le chargement JavaScript, le lecteur peut encore basculer sur un mode natif de secours.
+          Pour les liens Dropbox distants, il faut maintenant un <strong>petit proxy PDF</strong>. GitHub Pages seul ne peut pas contourner le blocage CORS.
         </p>
       </section>
     </main>
@@ -124,14 +139,14 @@
 
       <div id="readerFallback" class="reader-fallback hidden">
         <h3>Impossible d’afficher les pages directement dans le site</h3>
-        <p>
-          La source distante refuse probablement le chargement JavaScript du PDF. Dans ce cas, utilise <strong>PDF natif</strong> ou <strong>Nouvel onglet</strong>.
+        <p id="readerFallbackText">
+          La source distante refuse probablement le chargement JavaScript du PDF. Configure le proxy PDF, ou utilise <strong>PDF natif</strong> / <strong>Nouvel onglet</strong>.
         </p>
       </div>
     </div>
   </section>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-  <script src="./app.js?v=3.1.0" type="module"></script>
+  <script src="./app.js?v=3.2.0" type="module"></script>
 </body>
 </html>

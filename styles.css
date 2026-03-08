@@ -171,6 +171,32 @@ a {
   color: var(--text);
 }
 
+
+.proxy-config {
+  display: grid;
+  gap: 10px;
+}
+
+.proxy-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  outline: none;
+}
+
+.proxy-input:focus {
+  border-color: rgba(105, 196, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(89, 191, 255, 0.12);
+}
+
+.proxy-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .panel-section,
 .book-meta,
 .chapter-panel,
@@ -587,7 +613,7 @@ button:hover,
 }
 
 .reader-page + .reader-page {
-  margin-top: -2px;
+  margin-top: -4px;
 }
 
 .reader-page-canvas {

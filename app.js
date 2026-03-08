@@ -5,7 +5,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.2.0';
+const PROXY_STORAGE_KEY = 'pipi-reader-proxy-url';
 
 const state = {
   books: [],
@@ -18,6 +19,7 @@ const state = {
     mode: 'images',
     activeSourceUrl: '',
   },
+  proxyUrl: '',
 };
 
 const elements = {
@@ -25,6 +27,10 @@ const elements = {
   fileInput: document.getElementById('fileInput'),
   dropZone: document.getElementById('dropZone'),
   libraryList: document.getElementById('libraryList'),
+  proxyUrlInput: document.getElementById('proxyUrlInput'),
+  saveProxyBtn: document.getElementById('saveProxyBtn'),
+  clearProxyBtn: document.getElementById('clearProxyBtn'),
+  proxyHint: document.getElementById('proxyHint'),
   clearLibraryBtn: document.getElementById('clearLibraryBtn'),
   viewerTitle: document.getElementById('viewerTitle'),
   viewerSubtitle: document.getElementById('viewerSubtitle'),
@@ -53,12 +59,15 @@ const elements = {
   readerNativeMode: document.getElementById('readerNativeMode'),
   readerFrame: document.getElementById('readerFrame'),
   readerFallback: document.getElementById('readerFallback'),
+  readerFallbackText: document.getElementById('readerFallbackText'),
   readerLoader: document.getElementById('readerLoader'),
   readerLoaderText: document.getElementById('readerLoaderText'),
   readerCanvasStack: document.getElementById('readerCanvasStack'),
 };
 
+state.proxyUrl = getSavedProxyUrl();
 bindEvents();
+renderProxyConfig();
 renderLibrary();
 renderHome();
 syncRoute();
@@ -84,6 +93,20 @@ function bindEvents() {
       }
       elements.dropZone.classList.remove('dragover');
     });
+  });
+
+  elements.saveProxyBtn.addEventListener('click', () => {
+    state.proxyUrl = normalizeProxyBase(elements.proxyUrlInput.value);
+    saveProxyUrl(state.proxyUrl);
+    renderProxyConfig();
+    setStatus(state.proxyUrl ? 'Proxy PDF enregistré.' : 'Proxy PDF vidé.');
+  });
+
+  elements.clearProxyBtn.addEventListener('click', () => {
+    state.proxyUrl = '';
+    saveProxyUrl('');
+    renderProxyConfig();
+    setStatus('Proxy PDF vidé.');
   });
 
   elements.clearLibraryBtn.addEventListener('click', () => {
@@ -674,31 +697,34 @@ async function renderReader() {
     return;
   }
 
-  const candidates = source.nativeCandidates?.length ? source.nativeCandidates : [source.url].filter(Boolean);
-  if (!candidates.length) {
-    elements.readerNotice.textContent = 'Aucune URL intégrable trouvée.';
+  const nativeCandidates = source.nativeCandidates?.length ? source.nativeCandidates : [source.url].filter(Boolean);
+  const integratedCandidates = source.integratedCandidates?.length ? source.integratedCandidates : nativeCandidates;
+
+  if (!nativeCandidates.length) {
+    elements.readerNotice.textContent = 'Aucune URL exploitable trouvée.';
     showReaderFallback();
     return;
   }
 
-  const candidateIndex = state.reader.candidateIndex % candidates.length;
-  const activeSrc = candidates[candidateIndex];
-  state.reader.activeSourceUrl = activeSrc;
-  elements.readerNewTabLink.href = source.newTabUrl || activeSrc;
+  const candidateIndex = state.reader.candidateIndex % nativeCandidates.length;
+  const activeNativeSrc = nativeCandidates[candidateIndex];
+  const activeIntegratedSrc = integratedCandidates[Math.min(candidateIndex, integratedCandidates.length - 1)] || integratedCandidates[0] || activeNativeSrc;
+  state.reader.activeSourceUrl = activeIntegratedSrc;
+  elements.readerNewTabLink.href = source.newTabUrl || activeNativeSrc;
 
   const preferredMode = getSavedReaderMode(book);
   setReaderModeUi(preferredMode);
 
-  const sourceText = candidates.length > 1 ? `Source ${candidateIndex + 1}/${candidates.length}.` : 'Source principale.';
+  const sourceText = nativeCandidates.length > 1 ? `Source ${candidateIndex + 1}/${nativeCandidates.length}.` : 'Source principale.';
   setStatus(`${chapter.title} ouvert dans la vue lecteur dédiée.`);
 
   if (preferredMode === 'native') {
-    showNativeReader(activeSrc, `${book.title} — ${chapter.title} — PDF natif. ${sourceText}`);
+    showNativeReader(activeNativeSrc, `${book.title} — ${chapter.title} — PDF natif. ${sourceText}`);
     return;
   }
 
   try {
-    await showIntegratedPages(activeSrc, book, chapter, sourceText);
+    await showIntegratedPages(activeIntegratedSrc, book, chapter, sourceText);
   } catch (error) {
     console.error('Rendu intégré impossible', error);
     const isLocal = source.kind === 'file';
@@ -707,8 +733,10 @@ async function renderReader() {
       return;
     }
 
-    showReaderFallback('Cette source distante refuse probablement le chargement direct du PDF dans JavaScript. Passe en mode PDF natif.');
-    showNativeReader(activeSrc, `${book.title} — ${chapter.title} — fallback PDF natif.`);
+    const help = state.proxyUrl
+      ? 'Le proxy PDF configuré n’a pas réussi à récupérer la source distante.'
+      : 'Cette source distante refuse le chargement JavaScript depuis GitHub Pages. Configure le proxy PDF pour afficher les pages directement dans le site.';
+    showNativeReader(activeNativeSrc, `${book.title} — ${chapter.title} — fallback PDF natif. ${help}`);
   }
 }
 
@@ -811,8 +839,9 @@ function showReaderFallback(message = '') {
   elements.readerFrame.removeAttribute('src');
   elements.readerFallback.classList.remove('hidden');
   if (message) {
-    const paragraph = elements.readerFallback.querySelector('p');
-    if (paragraph) paragraph.textContent = message;
+    elements.readerFallbackText.textContent = message;
+  } else {
+    elements.readerFallbackText.textContent = 'La source distante refuse probablement le chargement JavaScript du PDF. Configure le proxy PDF, ou utilise PDF natif / Nouvel onglet.';
   }
 }
 
@@ -904,6 +933,7 @@ function getChapterSource(chapter) {
       kind: 'file',
       newTabUrl: localMatch.objectUrl,
       nativeCandidates: [localMatch.objectUrl],
+      integratedCandidates: [localMatch.objectUrl],
     };
   }
 
@@ -913,6 +943,8 @@ function getChapterSource(chapter) {
       kind: 'url',
       newTabUrl: remote.newTabUrl,
       nativeCandidates: remote.nativeCandidates,
+      integratedCandidates: remote.integratedCandidates,
+      proxyCapable: remote.proxyCapable,
     };
   }
 
@@ -925,10 +957,13 @@ function buildRemoteConfig(rawUrl) {
     if (url && !nativeCandidates.includes(url)) nativeCandidates.push(url);
   };
 
+  let proxyCapable = false;
+
   try {
     const parsed = new URL(rawUrl);
     const host = parsed.hostname.toLowerCase();
     const isDropbox = ['www.dropbox.com', 'dropbox.com', 'dl.dropbox.com', 'dl.dropboxusercontent.com'].includes(host);
+    proxyCapable = parsed.protocol === 'https:';
 
     if (isDropbox) {
       const rawOnMain = new URL(parsed.toString());
@@ -956,9 +991,24 @@ function buildRemoteConfig(rawUrl) {
     push(rawUrl);
   }
 
+  const integratedCandidates = [];
+  const proxyBase = state.proxyUrl;
+  if (proxyBase) {
+    for (const url of nativeCandidates) {
+      const proxied = buildProxiedUrl(proxyBase, url);
+      if (proxied && !integratedCandidates.includes(proxied)) integratedCandidates.push(proxied);
+    }
+  }
+
+  for (const url of nativeCandidates) {
+    if (!integratedCandidates.includes(url)) integratedCandidates.push(url);
+  }
+
   return {
     newTabUrl: nativeCandidates[0] || rawUrl,
     nativeCandidates,
+    integratedCandidates,
+    proxyCapable,
   };
 }
 
@@ -1012,8 +1062,49 @@ function appendPdfFragment(url) {
 
 function readablePdfError(error) {
   const message = String(error?.message || error || 'Erreur inconnue');
-  if (/fetch|network|cors|failed to fetch/i.test(message)) return 'chargement refusé par la source distante';
+  if (/fetch|network|cors|failed to fetch/i.test(message)) return 'chargement refusé par la source distante (CORS ou lien non autorisé)';
   return message;
+}
+
+function renderProxyConfig() {
+  elements.proxyUrlInput.value = state.proxyUrl || '';
+  elements.proxyHint.textContent = state.proxyUrl
+    ? `Proxy actif : ${state.proxyUrl}`
+    : 'Sans proxy, les PDFs Dropbox restent bloqués pour le rendu intégré à cause du CORS.';
+}
+
+function getSavedProxyUrl() {
+  return normalizeProxyBase(localStorage.getItem(PROXY_STORAGE_KEY) || '');
+}
+
+function saveProxyUrl(value) {
+  const normalized = normalizeProxyBase(value);
+  if (!normalized) {
+    localStorage.removeItem(PROXY_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(PROXY_STORAGE_KEY, normalized);
+}
+
+function normalizeProxyBase(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+function buildProxiedUrl(proxyBase, targetUrl) {
+  const base = normalizeProxyBase(proxyBase);
+  if (!base || !targetUrl) return '';
+  const proxyUrl = new URL(base);
+  proxyUrl.searchParams.set('url', targetUrl);
+  return proxyUrl.toString();
 }
 
 function normalizeKey(value) {
