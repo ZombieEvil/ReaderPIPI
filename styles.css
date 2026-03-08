@@ -13,7 +13,7 @@
   --shadow: 0 20px 46px rgba(0, 0, 0, 0.32);
   --radius: 22px;
   --reader-top-h: 170px;
-  --reader-page-width: 2000px;
+  --reader-page-width: 1024px;
 }
 
 * {
@@ -577,7 +577,7 @@ button:hover,
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 0;
+  padding: 0 10px 18px;
   display: block;
 }
 
@@ -617,8 +617,8 @@ button:hover,
   flex-direction: column;
   align-items: center;
   gap: 0;
-  padding: 0;
-  --reader-page-width: 2000px;
+  padding: 12px 0 20px;
+  --reader-page-width: 1024px;
 }
 
 .reader-page {
@@ -633,7 +633,7 @@ button:hover,
 }
 
 .reader-page + .reader-page {
-  margin-top: -6px;
+  margin-top: -4px;
 }
 
 .reader-page-canvas {

@@ -5,12 +5,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.4.0';
 const RENDER_QUALITY_STORAGE_KEY = 'pipi-reader-render-quality';
+const INITIAL_PAGE_BATCH = 5;
 const QUALITY_PRESETS = {
-  standard: { multiplier: 1.35, maxOutputScale: 2.2, maxCssWidth: 1600, label: 'Standard' },
-  high: { multiplier: 1.9, maxOutputScale: 3.2, maxCssWidth: 2000, label: 'Haute' },
-  ultra: { multiplier: 2.5, maxOutputScale: 4, maxCssWidth: 2400, label: 'Ultra' },
+  standard: { multiplier: 1.45, maxOutputScale: 2.6, maxCssWidth: 900, label: 'Standard' },
+  high: { multiplier: 2.0, maxOutputScale: 3.6, maxCssWidth: 1024, label: 'Haute' },
+  ultra: { multiplier: 2.55, maxOutputScale: 4.4, maxCssWidth: 1150, label: 'Ultra' },
 };
 const PROXY_STORAGE_KEY = 'pipi-reader-proxy-url';
 const DEFAULT_PROXY_URL = 'https://readerpipi-proxy.zombievil909249.workers.dev';
@@ -791,10 +792,12 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
   }
 
   const preset = getRenderPreset(state.reader.quality);
-  const stageWidth = Math.max(320, Math.min(preset.maxCssWidth, elements.readerStage.clientWidth - 4));
+  const stageWidth = Math.max(320, Math.min(preset.maxCssWidth, elements.readerStage.clientWidth - 40));
   const targetWidth = stageWidth;
   const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
-  const outputScale = Math.max(1.4, Math.min(preset.maxOutputScale, deviceRatio * preset.multiplier));
+  const outputScale = Math.max(1.45, Math.min(preset.maxOutputScale, deviceRatio * preset.multiplier));
+  const initialBatchCount = Math.min(INITIAL_PAGE_BATCH, pdfDocument.numPages);
+  let firstBatchShown = false;
 
   for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
     if (token !== state.reader.renderToken) {
@@ -802,7 +805,11 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
       return;
     }
 
-    updateLoaderText(`Rendu de la page ${pageNumber} / ${pdfDocument.numPages}…`);
+    const isInitialBatch = pageNumber <= initialBatchCount;
+    updateLoaderText(isInitialBatch
+      ? `Préchargement des pages ${pageNumber} / ${initialBatchCount}…`
+      : `Chargement progressif ${pageNumber} / ${pdfDocument.numPages}…`);
+
     const page = await pdfDocument.getPage(pageNumber);
     const baseViewport = page.getViewport({ scale: 1 });
     const cssScale = targetWidth / baseViewport.width;
@@ -835,6 +842,18 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
       annotationMode: pdfjsLib.AnnotationMode.DISABLE,
     }).promise;
     page.cleanup();
+
+    if (!firstBatchShown && pageNumber >= initialBatchCount) {
+      firstBatchShown = true;
+      elements.readerLoader.classList.add('hidden');
+      elements.readerCanvasStack.classList.remove('hidden');
+      elements.readerNotice.textContent = `${book.title} — ${chapter.title} — ${initialBatchCount} premières pages prêtes, le reste arrive progressivement. ${sourceText}`;
+      setStatus(`${chapter.title} : ${initialBatchCount}/${pdfDocument.numPages} pages prêtes.`);
+      await nextPaint();
+    } else if (firstBatchShown) {
+      setStatus(`${chapter.title} : rendu progressif ${pageNumber}/${pdfDocument.numPages}.`);
+      await nextPaint();
+    }
   }
 
   if (token !== state.reader.renderToken) {
@@ -845,6 +864,7 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
   elements.readerLoader.classList.add('hidden');
   elements.readerCanvasStack.classList.remove('hidden');
   elements.readerNotice.textContent = `${book.title} — ${chapter.title} — pages intégrées chargées. ${sourceText}`;
+  setStatus(`${chapter.title} : ${pdfDocument.numPages} pages chargées.`);
   try { await pdfDocument.destroy(); } catch {}
 }
 
@@ -1182,6 +1202,12 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll('`', '&#96;');
+}
+
+function nextPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
 }
 
 function debounce(fn, delay = 200) {
