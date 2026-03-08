@@ -590,3 +590,14 @@ input[type="range"] {
     min-height: 68vh;
   }
 }
+
+
+.mode-btn.active {
+  box-shadow: 0 0 0 1px rgba(124, 156, 255, 0.28);
+}
+
+.remote-inline-placeholder {
+  width: min(100%, 760px);
+  margin: 18px auto 0;
+  text-align: center;
+}

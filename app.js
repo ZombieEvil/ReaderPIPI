@@ -1,7 +1,7 @@
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 
 const state = {
   books: [],
@@ -526,98 +526,183 @@ function renderUnsupportedProtectedView(book) {
 }
 
 function buildRemotePdfSource(label, rawUrl) {
-  const urls = buildRemoteCandidates(rawUrl);
+  const remoteConfig = buildRemoteConfig(rawUrl);
   return {
     type: 'url',
     label,
     url: rawUrl,
-    urls,
-    bestInlineUrl: urls[0] || rawUrl,
-    googleViewerUrl: buildGoogleViewerUrl(urls[0] || rawUrl),
+    inlineUrls: remoteConfig.inlineUrls,
+    fetchUrls: remoteConfig.fetchUrls,
+    bestInlineUrl: remoteConfig.inlineUrls[0] || rawUrl,
+    bestFetchUrl: remoteConfig.fetchUrls[0] || rawUrl,
+    viewerUrls: {
+      direct: remoteConfig.inlineUrls[0] || rawUrl,
+      google: buildGoogleViewerUrl(remoteConfig.fetchUrls[0] || rawUrl),
+      googleAlt: buildGoogleViewerNgUrl(remoteConfig.fetchUrls[0] || rawUrl),
+    },
   };
 }
 
 async function openRemoteChapter(label, rawUrl) {
   const source = buildRemotePdfSource(label, rawUrl);
   state.activeSource = source;
-  renderRemoteBrowserView(source);
+  renderRemoteBrowserView(source, 'google');
 }
 
-function renderRemoteBrowserView(source) {
+function renderRemoteBrowserView(source, mode = 'google') {
+  const modes = getRemoteViewerModes(source);
+  const activeMode = modes.find((entry) => entry.key === mode) || modes[0];
+  const iframeHtml = activeMode.kind === 'iframe'
+    ? `<iframe class="remote-frame" src="${escapeAttribute(activeMode.src)}" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>`
+    : `<div class="placeholder-card remote-inline-placeholder"><h3>Lecture PDF.js</h3><p>Ce mode charge le PDF directement dans le moteur du site. Il marche seulement si la source distante autorise ce chargement.</p><button id="launchPdfJsInline" class="primary-btn" type="button">Lancer PDF.js</button></div>`;
+
   elements.viewer.className = 'viewer';
   elements.viewer.innerHTML = `
     <div class="remote-reader-card">
       <div class="remote-reader-header">
         <div>
           <h4>${escapeHtml(source.label)}</h4>
-          <p class="small-note">Lecture distante via visualiseur navigateur. Si le site source bloque le rendu intégré, ouvre le lien direct ou le lecteur de secours.</p>
+          <p class="small-note">Le mode conseillé est <strong>Lecture intégrée</strong>. Il évite le forçage au téléchargement quand le lien direct envoie un PDF en pièce jointe.</p>
         </div>
         <div class="remote-toolbar">
-          <a class="primary-btn" href="${escapeAttribute(source.bestInlineUrl)}" target="_blank" rel="noopener noreferrer">Ouvrir directement</a>
-          <a class="secondary-btn" href="${escapeAttribute(source.googleViewerUrl)}" target="_blank" rel="noopener noreferrer">Lecteur secours</a>
-          <button id="tryPdfJsBtn" class="ghost-btn" type="button">Essayer PDF.js</button>
+          ${modes.map((entry) => `<button class="${entry.key === activeMode.key ? 'primary-btn mode-btn active' : 'ghost-btn mode-btn'}" data-mode="${escapeAttribute(entry.key)}" type="button">${escapeHtml(entry.label)}</button>`).join('')}
+          <a class="secondary-btn" href="${escapeAttribute(source.bestInlineUrl)}" target="_blank" rel="noopener noreferrer">Nouvel onglet</a>
         </div>
       </div>
-      <iframe class="remote-frame" src="${escapeAttribute(source.bestInlineUrl)}" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>
+      ${iframeHtml}
       <div class="remote-note">
-        <strong>Astuce :</strong> sur GitHub Pages, les PDF distants Dropbox passent souvent mieux via un lien direct ou un iframe qu’avec PDF.js.
+        <strong>À savoir :</strong> si la zone reste vide, teste <em>Visionneuse secours</em> puis <em>Source directe</em>. Si seule la source distante bloque l’intégration, un site statique ne peut pas la forcer côté navigateur.
       </div>
     </div>
   `;
 
-  const tryPdfJsBtn = document.getElementById('tryPdfJsBtn');
-  if (tryPdfJsBtn) {
-    tryPdfJsBtn.addEventListener('click', async () => {
+  for (const button of elements.viewer.querySelectorAll('[data-mode]')) {
+    button.addEventListener('click', () => {
+      renderRemoteBrowserView(source, button.dataset.mode);
+    });
+  }
+
+  const launchPdfJsInline = document.getElementById('launchPdfJsInline');
+  if (launchPdfJsInline) {
+    launchPdfJsInline.addEventListener('click', async () => {
       await renderPdf(source);
     });
   }
 
-  setStatus(`${source.label} — vue distante chargée.`);
+  setStatus(`${source.label} — ${activeMode.status}.`);
+}
+
+function getRemoteViewerModes(source) {
+  return [
+    {
+      key: 'google',
+      label: 'Lecture intégrée',
+      kind: 'iframe',
+      src: source.viewerUrls.google,
+      status: 'lecture intégrée chargée',
+    },
+    {
+      key: 'googleAlt',
+      label: 'Visionneuse secours',
+      kind: 'iframe',
+      src: source.viewerUrls.googleAlt,
+      status: 'visionneuse secours chargée',
+    },
+    {
+      key: 'direct',
+      label: 'Source directe',
+      kind: 'iframe',
+      src: source.viewerUrls.direct,
+      status: 'source directe chargée',
+    },
+    {
+      key: 'pdfjs',
+      label: 'PDF.js',
+      kind: 'pdfjs',
+      status: 'mode PDF.js prêt',
+    },
+  ];
 }
 
 function buildGoogleViewerUrl(rawUrl) {
   return `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(rawUrl)}`;
 }
 
-function buildRemoteCandidates(rawUrl) {
-  const candidates = [];
+function buildGoogleViewerNgUrl(rawUrl) {
+  return `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(rawUrl)}`;
+}
+
+function buildRemoteConfig(rawUrl) {
+  const inlineUrls = [];
+  const fetchUrls = [];
+
+  const pushUnique = (list, url) => {
+    if (url && !list.includes(url)) list.push(url);
+  };
 
   try {
     const parsed = new URL(rawUrl);
     const host = parsed.hostname.toLowerCase();
+    const isDropbox = host === 'www.dropbox.com' || host === 'dl.dropbox.com' || host === 'dropbox.com' || host === 'dl.dropboxusercontent.com';
 
-    const pushVariant = (url) => {
-      if (url && !candidates.includes(url)) candidates.push(url);
-    };
+    if (isDropbox) {
+      const previewUrl = new URL(parsed.toString());
+      previewUrl.hostname = 'www.dropbox.com';
+      previewUrl.searchParams.set('dl', '0');
+      previewUrl.searchParams.delete('raw');
+      pushUnique(inlineUrls, previewUrl.toString());
 
-    const preferred = new URL(parsed.toString());
-    preferred.searchParams.set('dl', '1');
-    preferred.searchParams.delete('raw');
+      const rawPreviewUrl = new URL(parsed.toString());
+      rawPreviewUrl.hostname = 'www.dropbox.com';
+      rawPreviewUrl.searchParams.delete('dl');
+      rawPreviewUrl.searchParams.set('raw', '1');
+      pushUnique(inlineUrls, rawPreviewUrl.toString());
 
-    if (host === 'www.dropbox.com' || host === 'dl.dropbox.com' || host === 'dropbox.com') {
-      const userContent = new URL(preferred.toString());
-      userContent.hostname = 'dl.dropboxusercontent.com';
-      pushVariant(userContent.toString());
+      const directInlineUrl = new URL(parsed.toString());
+      directInlineUrl.hostname = 'dl.dropbox.com';
+      directInlineUrl.searchParams.set('dl', '0');
+      directInlineUrl.searchParams.delete('raw');
+      pushUnique(inlineUrls, directInlineUrl.toString());
 
-      const dlHost = new URL(preferred.toString());
-      dlHost.hostname = 'dl.dropbox.com';
-      pushVariant(dlHost.toString());
+      const userContentFetch = new URL(parsed.toString());
+      userContentFetch.hostname = 'dl.dropboxusercontent.com';
+      userContentFetch.searchParams.delete('dl');
+      userContentFetch.searchParams.set('raw', '1');
+      pushUnique(fetchUrls, userContentFetch.toString());
 
-      const rawVariant = new URL(parsed.toString());
-      rawVariant.hostname = 'www.dropbox.com';
-      rawVariant.searchParams.delete('dl');
-      rawVariant.searchParams.set('raw', '1');
-      pushVariant(rawVariant.toString());
+      const dropboxFetch = new URL(parsed.toString());
+      dropboxFetch.hostname = 'dl.dropbox.com';
+      dropboxFetch.searchParams.delete('dl');
+      dropboxFetch.searchParams.set('raw', '1');
+      pushUnique(fetchUrls, dropboxFetch.toString());
+
+      const genericFetch = new URL(parsed.toString());
+      genericFetch.hostname = 'www.dropbox.com';
+      genericFetch.searchParams.delete('dl');
+      genericFetch.searchParams.set('raw', '1');
+      pushUnique(fetchUrls, genericFetch.toString());
     }
 
-    pushVariant(preferred.toString());
-    pushVariant(parsed.toString());
+    const genericInline = new URL(parsed.toString());
+    genericInline.searchParams.set('dl', '0');
+    pushUnique(inlineUrls, genericInline.toString());
+    pushUnique(inlineUrls, parsed.toString());
+
+    const genericFetch = new URL(parsed.toString());
+    genericFetch.searchParams.delete('dl');
+    genericFetch.searchParams.set('raw', '1');
+    pushUnique(fetchUrls, genericFetch.toString());
+    pushUnique(fetchUrls, parsed.toString());
   } catch (error) {
     console.warn('Impossible de construire des variantes d’URL', error);
-    if (rawUrl) candidates.push(rawUrl);
+    pushUnique(inlineUrls, rawUrl);
+    pushUnique(fetchUrls, rawUrl);
   }
 
-  return Array.from(new Set(candidates.filter(Boolean)));
+  return {
+    inlineUrls: inlineUrls.filter(Boolean),
+    fetchUrls: fetchUrls.filter(Boolean),
+  };
 }
 
 function getActiveBook() {
@@ -682,8 +767,9 @@ async function renderPdf(source) {
       ? 'Le lien distant peut être bloqué par CORS, inaccessible, ou nécessiter une variante directe.'
       : 'Le PDF local n’a pas pu être lu.';
 
-    const variantsHtml = source.type === 'url' && Array.isArray(source.urls) && source.urls.length > 1
-      ? `<p class="small-note">Variantes essayées : ${escapeHtml(source.urls.length.toString())}</p>`
+    const variantCount = source.type === 'url' ? ((source.fetchUrls?.length || 0) + (source.inlineUrls?.length || 0)) : 0;
+    const variantsHtml = variantCount > 1
+      ? `<p class="small-note">Variantes préparées : ${escapeHtml(variantCount.toString())}</p>`
       : '';
 
     elements.viewer.innerHTML = `
@@ -711,7 +797,7 @@ async function loadPdfDocument(source) {
   if (source.type === 'url') {
     let lastError = new Error('Impossible de charger ce PDF distant.');
 
-    for (const candidate of source.urls || [source.url]) {
+    for (const candidate of source.fetchUrls || [source.url]) {
       try {
         const task = pdfjsLib.getDocument({ url: candidate, withCredentials: false });
         const pdf = await task.promise;

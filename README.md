@@ -46,3 +46,9 @@ http://localhost:8000/
 - `styles.css`
 - `app.js`
 - `README.md`
+
+
+## v2.3
+- Lecture intégrée prioritaire pour les PDF distants
+- Variantes Dropbox revues pour éviter le forçage au téléchargement
+- Visionneuse secours embarquée dans le site
