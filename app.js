@@ -5,7 +5,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
+const RENDER_QUALITY_STORAGE_KEY = 'pipi-reader-render-quality';
+const QUALITY_PRESETS = {
+  standard: { multiplier: 1.35, maxOutputScale: 2.2, maxCssWidth: 1600, label: 'Standard' },
+  high: { multiplier: 1.9, maxOutputScale: 3.2, maxCssWidth: 2000, label: 'Haute' },
+  ultra: { multiplier: 2.5, maxOutputScale: 4, maxCssWidth: 2400, label: 'Ultra' },
+};
 const PROXY_STORAGE_KEY = 'pipi-reader-proxy-url';
 const DEFAULT_PROXY_URL = 'https://readerpipi-proxy.zombievil909249.workers.dev';
 
@@ -19,6 +25,7 @@ const state = {
     renderToken: 0,
     mode: 'images',
     activeSourceUrl: '',
+    quality: getSavedRenderQuality(),
   },
   proxyUrl: '',
 };
@@ -53,6 +60,7 @@ const elements = {
   readerNativeBtn: document.getElementById('readerNativeBtn'),
   readerNewTabLink: document.getElementById('readerNewTabLink'),
   readerFullscreenBtn: document.getElementById('readerFullscreenBtn'),
+  readerQualitySelect: document.getElementById('readerQualitySelect'),
   backToLibraryBtn: document.getElementById('backToLibraryBtn'),
   readerNotice: document.getElementById('readerNotice'),
   readerStage: document.getElementById('readerStage'),
@@ -169,6 +177,14 @@ function bindEvents() {
     if (!book) return;
     setSavedReaderMode(book, 'native');
     renderReader();
+  });
+
+  elements.readerQualitySelect.addEventListener('change', () => {
+    state.reader.quality = sanitizeRenderQuality(elements.readerQualitySelect.value);
+    saveRenderQuality(state.reader.quality);
+    if (!elements.readerShell.classList.contains('hidden') && getSavedReaderMode(getActiveBook()) === 'images') {
+      renderReader();
+    }
   });
 
   elements.backToLibraryBtn.addEventListener('click', () => closeReader());
@@ -691,6 +707,7 @@ async function renderReader() {
 
   renderReaderTheme(book);
   renderReaderHeader(book, chapter);
+  renderReaderQualityUi();
 
   if (!source) {
     elements.readerNotice.textContent = 'Aucune source exploitable pour ce chapitre.';
@@ -773,9 +790,11 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
     return;
   }
 
-  const stageWidth = Math.max(320, elements.readerStage.clientWidth - 8);
-  const targetWidth = Math.min(1400, stageWidth);
-  const deviceRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const preset = getRenderPreset(state.reader.quality);
+  const stageWidth = Math.max(320, Math.min(preset.maxCssWidth, elements.readerStage.clientWidth - 4));
+  const targetWidth = stageWidth;
+  const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
+  const outputScale = Math.max(1.4, Math.min(preset.maxOutputScale, deviceRatio * preset.multiplier));
 
   for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
     if (token !== state.reader.renderToken) {
@@ -787,27 +806,35 @@ async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
     const page = await pdfDocument.getPage(pageNumber);
     const baseViewport = page.getViewport({ scale: 1 });
     const cssScale = targetWidth / baseViewport.width;
-    const viewport = page.getViewport({ scale: cssScale * deviceRatio });
+    const cssWidth = Math.floor(baseViewport.width * cssScale);
+    const cssHeight = Math.floor(baseViewport.height * cssScale);
+    const viewport = page.getViewport({ scale: cssScale * outputScale });
 
     const wrapper = document.createElement('section');
     wrapper.className = 'reader-page';
     wrapper.dataset.page = String(pageNumber);
+    wrapper.style.width = `${cssWidth}px`;
 
     const canvas = document.createElement('canvas');
     canvas.className = 'reader-page-canvas';
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-    canvas.style.width = `${Math.floor(baseViewport.width * cssScale)}px`;
-    canvas.style.height = `${Math.floor(baseViewport.height * cssScale)}px`;
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
     wrapper.appendChild(canvas);
 
     elements.readerCanvasStack.appendChild(wrapper);
 
     const context = canvas.getContext('2d', { alpha: false });
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
     await page.render({
       canvasContext: context,
       viewport,
+      intent: 'display',
+      annotationMode: pdfjsLib.AnnotationMode.DISABLE,
     }).promise;
+    page.cleanup();
   }
 
   if (token !== state.reader.renderToken) {
@@ -844,6 +871,11 @@ function showReaderFallback(message = '') {
   } else {
     elements.readerFallbackText.textContent = 'La source distante refuse probablement le chargement JavaScript du PDF. Configure le proxy PDF, ou utilise PDF natif / Nouvel onglet.';
   }
+}
+
+function renderReaderQualityUi() {
+  if (!elements.readerQualitySelect) return;
+  elements.readerQualitySelect.value = sanitizeRenderQuality(state.reader.quality);
 }
 
 function renderReaderHeader(book, chapter) {
@@ -894,6 +926,28 @@ function renderReaderTheme(book) {
 
 function setReaderTheme(book, theme) {
   localStorage.setItem(getReaderThemeStorageKey(book), theme);
+}
+
+function getRenderPreset(key) {
+  return QUALITY_PRESETS[sanitizeRenderQuality(key)] || QUALITY_PRESETS.high;
+}
+
+function sanitizeRenderQuality(value) {
+  return Object.prototype.hasOwnProperty.call(QUALITY_PRESETS, value) ? value : 'high';
+}
+
+function getSavedRenderQuality() {
+  try {
+    return sanitizeRenderQuality(localStorage.getItem(RENDER_QUALITY_STORAGE_KEY) || 'high');
+  } catch {
+    return 'high';
+  }
+}
+
+function saveRenderQuality(value) {
+  try {
+    localStorage.setItem(RENDER_QUALITY_STORAGE_KEY, sanitizeRenderQuality(value));
+  } catch {}
 }
 
 function getSavedReaderTheme(book) {
