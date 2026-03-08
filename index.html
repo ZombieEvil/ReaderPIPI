@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pipi Reader Web</title>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge">P</div>
+        <div>
+          <h1>Pipi Reader Web</h1>
+          <p>Lecteur .pipi + PDF</p>
+        </div>
+      </div>
+
+      <label class="upload-card" for="fileInput">
+        <input id="fileInput" type="file" multiple accept=".pipi,.pdf,application/pdf" hidden />
+        <strong>Importer des fichiers</strong>
+        <span>Ajoute un ou plusieurs .pipi et PDF</span>
+      </label>
+
+      <div id="dropZone" class="drop-zone">
+        Glisse-dépose tes fichiers ici
+      </div>
+
+      <section class="panel-section">
+        <div class="section-title-row">
+          <h2>Bibliothèque</h2>
+          <button id="clearLibraryBtn" class="ghost-btn" type="button">Vider</button>
+        </div>
+        <div id="libraryList" class="library-list empty-state">
+          Aucun fichier chargé.
+        </div>
+      </section>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <h2 id="viewerTitle">Aucun contenu ouvert</h2>
+          <p id="viewerSubtitle">Charge un .pipi ou un PDF pour commencer.</p>
+        </div>
+
+        <div class="toolbar">
+          <label class="zoom-control">
+            <span>Zoom</span>
+            <input id="zoomRange" type="range" min="0.6" max="2.2" value="1" step="0.1" />
+          </label>
+          <button id="rerenderBtn" class="primary-btn" type="button">Recharger</button>
+        </div>
+      </header>
+
+      <section id="bookMeta" class="book-meta hidden"></section>
+
+      <section id="chapterPanel" class="chapter-panel hidden">
+        <div class="section-title-row">
+          <h3>Chapitres</h3>
+          <span id="chapterCount" class="muted"></span>
+        </div>
+        <div id="chapterList" class="chapter-list"></div>
+      </section>
+
+      <section class="viewer-panel">
+        <div id="statusBar" class="status-bar">En attente…</div>
+        <div id="viewer" class="viewer empty-viewer">
+          <div class="placeholder-card">
+            <h3>Prêt à lire</h3>
+            <p>
+              Le site prend en charge :
+              <strong>PDF locaux</strong>,
+              <strong>.pipi en clair</strong>
+              et les <strong>.pipi chiffrés</strong> si tu connais leur mot de passe.
+            </p>
+            <p>
+              Astuce : si ton .pipi contient des chapitres distants nommés “Chapitre 1”, “Chapitre 2”…
+              et que tu as aussi des fichiers locaux “1.pdf”, “2.pdf”… le lecteur essaie de les associer automatiquement.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
