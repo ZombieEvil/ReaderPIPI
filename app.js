@@ -7,6 +7,7 @@ const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
 const APP_VERSION = '3.2.0';
 const PROXY_STORAGE_KEY = 'pipi-reader-proxy-url';
+const DEFAULT_PROXY_URL = 'https://readerpipi-proxy.zombievil909249.workers.dev';
 
 const state = {
   books: [],
@@ -1074,7 +1075,7 @@ function renderProxyConfig() {
 }
 
 function getSavedProxyUrl() {
-  return normalizeProxyBase(localStorage.getItem(PROXY_STORAGE_KEY) || '');
+  return normalizeProxyBase(localStorage.getItem(PROXY_STORAGE_KEY) || DEFAULT_PROXY_URL);
 }
 
 function saveProxyUrl(value) {
