@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pipi Reader Web</title>
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=3.0.0" />
 </head>
 <body>
-  <div class="app-shell">
+  <div id="homeShell" class="app-shell">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-badge">P</div>
         <div>
           <h1>Pipi Reader Web</h1>
           <p>Lecteur .pipi + PDF</p>
-          <span class="version-badge">v2.4 Firefox + Dropbox</span>
+          <span class="version-badge">v3.0 lecteur dédié</span>
         </div>
       </div>
 
@@ -28,23 +28,6 @@
       <div id="dropZone" class="drop-zone">
         Glisse-dépose tes fichiers ici
       </div>
-
-      <section class="panel-section compact-section">
-        <div class="section-title-row">
-          <h2>Lecture Dropbox</h2>
-        </div>
-        <p class="small-note setting-help">
-          Pour lire directement les chapitres Dropbox dans le site, colle une clé <strong>Dropbox Embedder</strong>.
-        </p>
-        <input id="dropboxAppKeyInput" class="setting-input" type="text" placeholder="Clé Dropbox Embedder" autocomplete="off" />
-        <div class="inline-actions">
-          <button id="saveDropboxKeyBtn" class="primary-btn small-btn" type="button">Enregistrer</button>
-          <button id="clearDropboxKeyBtn" class="ghost-btn small-btn" type="button">Effacer</button>
-        </div>
-        <p class="small-note setting-help">
-          Domaine à autoriser dans Dropbox : <strong>ton-site.github.io</strong> ou ton domaine perso.
-        </p>
-      </section>
 
       <section class="panel-section">
         <div class="section-title-row">
@@ -61,17 +44,15 @@
       <header class="topbar">
         <div>
           <h2 id="viewerTitle">Aucun contenu ouvert</h2>
-          <p id="viewerSubtitle">Charge un .pipi ou un PDF pour commencer.</p>
+          <p id="viewerSubtitle">Importe un .pipi ou un PDF puis clique sur un chapitre pour ouvrir le lecteur dédié.</p>
         </div>
 
         <div class="toolbar">
-          <label class="zoom-control">
-            <span>Zoom</span>
-            <input id="zoomRange" type="range" min="0.6" max="2.2" value="1" step="0.1" />
-          </label>
-          <button id="rerenderBtn" class="primary-btn" type="button">Recharger</button>
+          <button id="openLastReaderBtn" class="primary-btn hidden" type="button">Reprendre la lecture</button>
         </div>
       </header>
+
+      <section id="statusBar" class="status-bar">En attente…</section>
 
       <section id="bookMeta" class="book-meta hidden"></section>
 
@@ -83,29 +64,62 @@
         <div id="chapterList" class="chapter-list"></div>
       </section>
 
-      <section class="viewer-panel">
-        <div id="statusBar" class="status-bar">En attente…</div>
-        <div id="viewer" class="viewer empty-viewer">
-          <div class="placeholder-card">
-            <h3>Prêt à lire</h3>
-            <p>
-              Le site prend en charge :
-              <strong>PDF locaux</strong>,
-              <strong>.pipi en clair</strong>
-              et les <strong>.pipi chiffrés compatibles avec la clé connue de l’app Pipi</strong>.
-            </p>
-            <p>
-              Astuce : si ton .pipi contient des chapitres distants nommés “Chapitre 1”, “Chapitre 2”…
-              et que tu as aussi des fichiers locaux “1.pdf”, “2.pdf”… le lecteur essaie de les associer automatiquement.
-            </p>
-          </div>
-        </div>
+      <section id="welcomeCard" class="placeholder-card">
+        <h3>Nouvelle lecture dédiée</h3>
+        <p>
+          Chaque clic sur un chapitre ouvre maintenant une <strong>vue lecteur dédiée</strong>, plus proche d’un site de scans :
+          sélecteur de chapitre, navigation précédent/suivant, arrière-plan, plein écran et lecteur PDF natif.
+        </p>
+        <p>
+          Les <strong>.pipi</strong> en clair et les <strong>.pipi chiffrés compatibles avec la clé connue de l’app Pipi</strong> restent pris en charge.
+        </p>
       </section>
     </main>
   </div>
 
+  <section id="readerShell" class="reader-shell hidden" aria-label="Lecteur dédié">
+    <div class="reader-top">
+      <div class="reader-top-left">
+        <button id="backToLibraryBtn" class="ghost-btn" type="button">← Retour</button>
+        <div class="reader-select-wrap">
+          <select id="readerChapterSelect" class="reader-select"></select>
+        </div>
+        <div class="reader-last-line">
+          <span>Dernière sélection :</span>
+          <strong id="readerLastSelection">Aucune</strong>
+        </div>
+        <div class="reader-bg-row">
+          <span>Arrière-plan :</span>
+          <button class="bg-swatch active" data-bg="midnight" type="button" aria-label="Fond bleu nuit"></button>
+          <button class="bg-swatch" data-bg="paper" type="button" aria-label="Fond clair"></button>
+          <button class="bg-swatch" data-bg="black" type="button" aria-label="Fond noir"></button>
+        </div>
+      </div>
+
+      <div class="reader-top-right">
+        <button id="readerPrevBtn" class="secondary-btn reader-nav-btn" type="button">Précédent</button>
+        <button id="readerLatestBtn" class="ghost-btn reader-nav-btn" type="button">Dernier chapitre</button>
+        <button id="readerNextBtn" class="primary-btn reader-nav-btn" type="button">Suivant</button>
+        <button id="readerAltSourceBtn" class="ghost-btn" type="button">Autre source</button>
+        <a id="readerNewTabLink" class="ghost-btn" href="#" target="_blank" rel="noopener noreferrer">Nouvel onglet</a>
+        <button id="readerFullscreenBtn" class="outline-btn fullscreen-btn" type="button">Plein écran</button>
+      </div>
+    </div>
+
+    <div id="readerNotice" class="reader-notice">Lecture dédiée prête.</div>
+
+    <div id="readerStage" class="reader-stage theme-midnight">
+      <iframe id="readerFrame" class="reader-frame" title="Lecteur PDF natif" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>
+      <div id="readerFallback" class="reader-fallback hidden">
+        <h3>Impossible d’ouvrir ce chapitre dans le lecteur intégré</h3>
+        <p>
+          Cette source refuse probablement l’intégration directe. Essaie <strong>Autre source</strong> ou <strong>Nouvel onglet</strong>.
+        </p>
+      </div>
+    </div>
+  </section>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="./app.js?v=2.4.0"></script>
+  <script src="./app.js?v=3.0.0"></script>
 </body>
 </html>
