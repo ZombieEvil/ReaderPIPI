@@ -331,6 +331,32 @@ input[type="range"] {
   line-height: 1.55;
 }
 
+
+.meta-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.meta-pill-success {
+  color: var(--success);
+  border-color: rgba(137, 227, 161, 0.28);
+  background: rgba(137, 227, 161, 0.08);
+}
+
 .chapter-row {
   grid-template-columns: 1fr auto;
   align-items: center;

@@ -1,4 +1,7 @@
 const DELIMITER = '%%%-%%%';
+const APP_PIPI_KEY = 'var i = 14226-11420334e10';
+const MIN_PIPI_DELIMITER_COUNT = 7;
+
 const state = {
   books: [],
   activeBookId: null,
@@ -32,6 +35,8 @@ elements.zoomRange.value = String(state.zoom);
 
 bindEvents();
 renderLibrary();
+renderBookArea();
+resetViewer();
 
 function bindEvents() {
   elements.fileInput.addEventListener('change', async (event) => {
@@ -146,36 +151,97 @@ function registerLocalPdf(file) {
 }
 
 function parsePipiFile(raw, fileName) {
-  const trimmed = raw.trim();
+  const trimmed = String(raw || '').trim();
   if (!trimmed) {
     throw new Error('fichier vide');
   }
 
-  const isEncrypted = trimmed.startsWith('U2FsdGVkX1');
+  const detection = detectPipiPayload(trimmed);
 
-  if (isEncrypted) {
+  if (detection.kind === 'plain') {
+    const parsed = parsePlainPipiText(trimmed, fileName);
     return {
       id: crypto.randomUUID(),
       type: 'pipi',
-      kind: 'pipi-encrypted',
+      kind: 'pipi-plain',
+      fileName,
+      encrypted: false,
+      wasEncrypted: false,
+      compatibility: 'native',
+      ...parsed,
+    };
+  }
+
+  if (detection.kind === 'encrypted-supported') {
+    const parsed = parsePlainPipiText(detection.decryptedText, fileName);
+    return {
+      id: crypto.randomUUID(),
+      type: 'pipi',
+      kind: 'pipi-plain',
+      fileName,
+      encrypted: false,
+      wasEncrypted: true,
+      compatibility: 'pipi-app-key',
+      sourceFormat: 'openssl-base64-salted',
+      ...parsed,
+    };
+  }
+
+  if (detection.kind === 'encrypted-unsupported') {
+    return {
+      id: crypto.randomUUID(),
+      type: 'pipi',
+      kind: 'pipi-protected-unsupported',
       fileName,
       title: fileName,
-      encryptedPayload: trimmed,
       encrypted: true,
+      wasEncrypted: true,
+      compatibility: 'unknown',
+      sourceFormat: 'openssl-base64-salted',
+      rawPayload: trimmed,
       meta: null,
       chapters: [],
     };
   }
 
-  const parsed = parsePlainPipiText(trimmed, fileName);
+  throw new Error('structure .pipi non reconnue');
+}
+
+function detectPipiPayload(text) {
+  if (countPipiDelimiters(text) >= MIN_PIPI_DELIMITER_COUNT) {
+    return { kind: 'plain' };
+  }
+
+  const looksEncrypted = text.startsWith('U2FsdGVkX1');
+  if (!looksEncrypted) {
+    return { kind: 'unknown' };
+  }
+
+  const decryptedText = decryptWithKnownPipiKey(text);
+  if (decryptedText && countPipiDelimiters(decryptedText) >= MIN_PIPI_DELIMITER_COUNT) {
+    return {
+      kind: 'encrypted-supported',
+      decryptedText,
+    };
+  }
+
   return {
-    id: crypto.randomUUID(),
-    type: 'pipi',
-    kind: 'pipi-plain',
-    fileName,
-    encrypted: false,
-    ...parsed,
+    kind: 'encrypted-unsupported',
   };
+}
+
+function decryptWithKnownPipiKey(cipherText) {
+  try {
+    const decrypted = CryptoJS.AES.decrypt(cipherText, APP_PIPI_KEY).toString(CryptoJS.enc.Utf8);
+    return decrypted?.trim() || '';
+  } catch (error) {
+    console.error('Déchiffrement .pipi impossible', error);
+    return '';
+  }
+}
+
+function countPipiDelimiters(text) {
+  return (String(text || '').match(/%%%-%%%/g) || []).length;
 }
 
 function parsePlainPipiText(text, fileName) {
@@ -244,17 +310,8 @@ function renderLibrary() {
     item.type = 'button';
     item.className = `library-item ${book.id === state.activeBookId ? 'active' : ''}`;
 
-    const typeLabel = book.kind === 'pdf'
-      ? 'PDF local'
-      : book.encrypted
-        ? '.pipi chiffré'
-        : '.pipi';
-
-    const subtitle = book.kind === 'pdf'
-      ? 'Lecture directe'
-      : book.encrypted
-        ? 'Mot de passe requis'
-        : `${book.chapters.length} chapitre(s)`;
+    const typeLabel = getTypeLabel(book);
+    const subtitle = getBookSubtitle(book);
 
     item.innerHTML = `
       <div class="item-row">
@@ -280,6 +337,20 @@ function renderLibrary() {
   }
 }
 
+function getTypeLabel(book) {
+  if (book.kind === 'pdf') return 'PDF local';
+  if (book.kind === 'pipi-protected-unsupported') return '.pipi protégé';
+  if (book.wasEncrypted) return '.pipi auto-déverrouillé';
+  return '.pipi';
+}
+
+function getBookSubtitle(book) {
+  if (book.kind === 'pdf') return 'Lecture directe';
+  if (book.kind === 'pipi-protected-unsupported') return 'Format protégé non encore compatible';
+  if (book.wasEncrypted) return `${book.chapters.length} chapitre(s) · clé Pipi détectée`;
+  return `${book.chapters.length} chapitre(s)`;
+}
+
 function renderBookArea() {
   const activeBook = getActiveBook();
 
@@ -300,16 +371,20 @@ function renderBookArea() {
     return;
   }
 
-  if (activeBook.encrypted) {
-    elements.viewerSubtitle.textContent = 'Fichier .pipi chiffré détecté.';
+  if (activeBook.kind === 'pipi-protected-unsupported') {
+    elements.viewerSubtitle.textContent = 'Fichier .pipi protégé détecté.';
     elements.bookMeta.classList.add('hidden');
     elements.chapterPanel.classList.add('hidden');
-    renderUnlockView(activeBook);
+    renderUnsupportedProtectedView(activeBook);
     return;
   }
 
-  elements.viewerSubtitle.textContent = `${activeBook.chapters.length} chapitre(s) détecté(s).`;
-  renderMeta(activeBook.meta);
+  const decryptionBadge = activeBook.wasEncrypted
+    ? 'Déverrouillé automatiquement avec la compatibilité Pipi.'
+    : `${activeBook.chapters.length} chapitre(s) détecté(s).`;
+
+  elements.viewerSubtitle.textContent = decryptionBadge;
+  renderMeta(activeBook.meta, activeBook);
   renderChapters(activeBook);
   if (!state.activeChapterId) {
     elements.viewer.className = 'viewer empty-viewer';
@@ -322,7 +397,7 @@ function renderBookArea() {
   }
 }
 
-function renderMeta(meta) {
+function renderMeta(meta, book) {
   if (!meta) {
     elements.bookMeta.classList.add('hidden');
     return;
@@ -332,10 +407,20 @@ function renderMeta(meta) {
     ? `<img class="cover-preview" src="${escapeAttribute(meta.coverUrl)}" alt="Couverture" onerror="this.style.display='none'" />`
     : `<div class="cover-preview"></div>`;
 
+  const compatHtml = book?.wasEncrypted
+    ? `
+      <div class="meta-pill-row">
+        <span class="meta-pill meta-pill-success">.pipi protégé décodé automatiquement</span>
+        <span class="meta-pill">clé intégrée Pipi détectée</span>
+      </div>
+    `
+    : '';
+
   elements.bookMeta.innerHTML = `
     <div class="book-meta-grid">
       <div>${cover}</div>
       <div>
+        ${compatHtml}
         <div class="meta-grid">
           <dl><dt>Titre</dt><dd>${escapeHtml(meta.title)}</dd></dl>
           <dl><dt>Auteur</dt><dd>${escapeHtml(meta.author)}</dd></dl>
@@ -361,11 +446,17 @@ function renderChapters(book) {
     const item = document.createElement('div');
     item.className = `chapter-item ${chapter.id === state.activeChapterId ? 'active' : ''}`;
 
+    const sourceDescription = localMatch
+      ? 'PDF local associé trouvé.'
+      : chapter.url
+        ? 'Source distante détectée dans le .pipi.'
+        : 'Aucune source exploitable.';
+
     item.innerHTML = `
       <div class="chapter-row">
         <div>
           <h4>${escapeHtml(chapter.title)}</h4>
-          <p>${localMatch ? 'PDF local associé trouvé.' : 'Source distante dans le .pipi.'}</p>
+          <p>${escapeHtml(sourceDescription)}</p>
         </div>
         <div class="chapter-actions"></div>
       </div>
@@ -392,17 +483,13 @@ function renderChapters(book) {
 
     if (chapter.url) {
       const remoteBtn = document.createElement('button');
-      remoteBtn.className = 'secondary-btn';
+      remoteBtn.className = localMatch ? 'secondary-btn' : 'primary-btn';
       remoteBtn.type = 'button';
-      remoteBtn.textContent = 'Ouvrir URL';
+      remoteBtn.textContent = localMatch ? 'Ouvrir URL' : 'Lire en ligne';
       remoteBtn.addEventListener('click', async () => {
         state.activeChapterId = chapter.id;
         renderChapters(book);
-        await renderPdf({
-          type: 'url',
-          label: `${book.title} — ${chapter.title}`,
-          url: chapter.url,
-        });
+        await renderPdf(buildRemotePdfSource(`${book.title} — ${chapter.title}`, chapter.url));
       });
       actions.appendChild(remoteBtn);
 
@@ -419,67 +506,53 @@ function renderChapters(book) {
   }
 }
 
-function renderUnlockView(book) {
+function renderUnsupportedProtectedView(book) {
   elements.viewer.className = 'viewer';
   elements.viewer.innerHTML = `
     <div class="unlock-card">
       <h4>${escapeHtml(book.title)}</h4>
       <p>
-        Ce .pipi ressemble à un contenu chiffré au format OpenSSL base64 salé.
-        Entre le mot de passe si tu le connais.
+        Ce fichier <strong>.pipi</strong> semble protégé, mais il n'a pas pu être décodé avec la compatibilité connue de l'application Pipi.
       </p>
-      <div class="unlock-grid">
-        <input id="unlockInput" class="text-input" type="password" placeholder="Mot de passe" />
-        <button id="unlockBtn" class="primary-btn" type="button">Déverrouiller</button>
+      <div class="message error">
+        Le faux écran “entre un mot de passe” a été retiré : ce prototype n'invente plus de mot de passe quand le format n'est pas reconnu.
       </div>
-      <div id="unlockMessage" class="message"></div>
       <p class="small-note">
-        Si le mot de passe n'est pas connu, je ne peux pas garantir la lecture de ce fichier côté navigateur.
+        Conclusion actuelle : soit le fichier utilise une autre version du format, soit une autre clé, soit une structure propriétaire différente.
       </p>
     </div>
   `;
+}
 
-  const input = document.getElementById('unlockInput');
-  const button = document.getElementById('unlockBtn');
-  const message = document.getElementById('unlockMessage');
-
-  const unlock = () => {
-    const password = input.value;
-    if (!password) {
-      message.className = 'message error';
-      message.textContent = 'Entre un mot de passe.';
-      return;
-    }
-
-    try {
-      const decrypted = CryptoJS.AES.decrypt(book.encryptedPayload, password).toString(CryptoJS.enc.Utf8);
-      if (!decrypted || !decrypted.includes(DELIMITER)) {
-        throw new Error('mot de passe invalide ou format non compatible');
-      }
-
-      const parsed = parsePlainPipiText(decrypted.trim(), book.fileName);
-      book.encrypted = false;
-      book.kind = 'pipi-plain';
-      book.meta = parsed.meta;
-      book.title = parsed.title;
-      book.chapters = parsed.chapters;
-      delete book.encryptedPayload;
-
-      message.className = 'message success';
-      message.textContent = 'Déverrouillage réussi.';
-      renderLibrary();
-      renderBookArea();
-      setStatus(`Déverrouillage réussi : ${book.title}`);
-    } catch (error) {
-      message.className = 'message error';
-      message.textContent = `Échec : ${error.message}`;
-    }
+function buildRemotePdfSource(label, rawUrl) {
+  return {
+    type: 'url',
+    label,
+    url: rawUrl,
+    urls: buildRemoteCandidates(rawUrl),
   };
+}
 
-  button.addEventListener('click', unlock);
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') unlock();
-  });
+function buildRemoteCandidates(rawUrl) {
+  const candidates = [rawUrl];
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.hostname.includes('dropbox.com')) {
+      const directDownload = new URL(parsed.toString());
+      directDownload.searchParams.set('dl', '1');
+      candidates.push(directDownload.toString());
+
+      const rawVariant = new URL(parsed.toString());
+      rawVariant.searchParams.delete('dl');
+      rawVariant.searchParams.set('raw', '1');
+      candidates.push(rawVariant.toString());
+    }
+  } catch (error) {
+    console.warn('Impossible de construire des variantes d’URL', error);
+  }
+
+  return Array.from(new Set(candidates.filter(Boolean)));
 }
 
 function getActiveBook() {
@@ -507,10 +580,13 @@ async function renderPdf(source) {
   setStatus(`Chargement de ${source.label}…`);
 
   try {
-    const loadingTask = await createLoadingTask(source);
-    const pdf = await loadingTask.promise;
-
+    const pdfDocument = await loadPdfDocument(source);
     if (token !== state.renderToken) return;
+
+    const { pdf, resolvedFrom } = pdfDocument;
+    if (resolvedFrom) {
+      source.resolvedFrom = resolvedFrom;
+    }
 
     setStatus(`${source.label} — ${pdf.numPages} page(s). Rendu en cours…`);
 
@@ -538,14 +614,19 @@ async function renderPdf(source) {
   } catch (error) {
     console.error(error);
     const detail = source.type === 'url'
-      ? 'Le lien distant peut être bloqué par CORS ou inaccessible.'
+      ? 'Le lien distant peut être bloqué par CORS, inaccessible, ou nécessiter une variante directe.'
       : 'Le PDF local n’a pas pu être lu.';
+
+    const variantsHtml = source.type === 'url' && Array.isArray(source.urls) && source.urls.length > 1
+      ? `<p class="small-note">Variantes essayées : ${escapeHtml(source.urls.length.toString())}</p>`
+      : '';
 
     elements.viewer.innerHTML = `
       <div class="unlock-card">
         <h4>Lecture impossible</h4>
         <p>${escapeHtml(detail)}</p>
         <p class="message error">${escapeHtml(error.message || 'Erreur inconnue')}</p>
+        ${variantsHtml}
         ${source.type === 'url' ? `<p><a class="ghost-btn" href="${escapeAttribute(source.url)}" target="_blank" rel="noopener noreferrer">Ouvrir le lien dans un nouvel onglet</a></p>` : ''}
       </div>
     `;
@@ -554,14 +635,28 @@ async function renderPdf(source) {
   }
 }
 
-async function createLoadingTask(source) {
+async function loadPdfDocument(source) {
   if (source.type === 'file') {
     const bytes = await source.file.arrayBuffer();
-    return pdfjsLib.getDocument({ data: bytes });
+    const task = pdfjsLib.getDocument({ data: bytes });
+    const pdf = await task.promise;
+    return { pdf, resolvedFrom: 'file' };
   }
 
   if (source.type === 'url') {
-    return pdfjsLib.getDocument({ url: source.url, withCredentials: false });
+    let lastError = new Error('Impossible de charger ce PDF distant.');
+
+    for (const candidate of source.urls || [source.url]) {
+      try {
+        const task = pdfjsLib.getDocument({ url: candidate, withCredentials: false });
+        const pdf = await task.promise;
+        return { pdf, resolvedFrom: candidate };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError;
   }
 
   throw new Error('source PDF inconnue');
@@ -582,7 +677,16 @@ function resetViewer() {
   elements.viewer.innerHTML = `
     <div class="placeholder-card">
       <h3>Prêt à lire</h3>
-      <p>Charge un .pipi ou un PDF pour commencer.</p>
+      <p>
+        Le site prend en charge :
+        <strong>PDF locaux</strong>,
+        <strong>.pipi en clair</strong>
+        et les <strong>.pipi chiffrés compatibles avec la clé connue de l’app Pipi</strong>.
+      </p>
+      <p>
+        Astuce : si ton .pipi contient des chapitres distants nommés “Chapitre 1”, “Chapitre 2”…
+        et que tu as aussi des fichiers locaux “1.pdf”, “2.pdf”… le lecteur essaie de les associer automatiquement.
+      </p>
     </div>
   `;
 }
