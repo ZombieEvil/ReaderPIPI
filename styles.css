@@ -601,3 +601,57 @@ input[type="range"] {
   margin: 18px auto 0;
   text-align: center;
 }
+
+
+.compact-section {
+  display: grid;
+  gap: 10px;
+}
+
+.setting-input {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(124, 156, 255, 0.22);
+  background: rgba(17, 27, 54, 0.82);
+  color: var(--text);
+  padding: 12px 14px;
+  outline: none;
+}
+
+.setting-input:focus {
+  border-color: rgba(124, 156, 255, 0.42);
+  box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.12);
+}
+
+.inline-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.small-btn {
+  padding: 10px 14px;
+  border-radius: 12px;
+}
+
+.setting-help {
+  margin: 0;
+}
+
+.remote-object {
+  width: 100%;
+  min-height: 78vh;
+  border: 0;
+  background: #0a0f1d;
+}
+
+.dropbox-embed-host {
+  min-height: 78vh;
+  background: #0a0f1d;
+}
+
+.dropbox-embed-host iframe {
+  width: 100%;
+  min-height: 78vh;
+  border: 0;
+}

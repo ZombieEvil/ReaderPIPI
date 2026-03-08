@@ -15,7 +15,7 @@
         <div>
           <h1>Pipi Reader Web</h1>
           <p>Lecteur .pipi + PDF</p>
-          <span class="version-badge">v2.3 lecture intégrée</span>
+          <span class="version-badge">v2.4 Firefox + Dropbox</span>
         </div>
       </div>
 
@@ -28,6 +28,23 @@
       <div id="dropZone" class="drop-zone">
         Glisse-dépose tes fichiers ici
       </div>
+
+      <section class="panel-section compact-section">
+        <div class="section-title-row">
+          <h2>Lecture Dropbox</h2>
+        </div>
+        <p class="small-note setting-help">
+          Pour lire directement les chapitres Dropbox dans le site, colle une clé <strong>Dropbox Embedder</strong>.
+        </p>
+        <input id="dropboxAppKeyInput" class="setting-input" type="text" placeholder="Clé Dropbox Embedder" autocomplete="off" />
+        <div class="inline-actions">
+          <button id="saveDropboxKeyBtn" class="primary-btn small-btn" type="button">Enregistrer</button>
+          <button id="clearDropboxKeyBtn" class="ghost-btn small-btn" type="button">Effacer</button>
+        </div>
+        <p class="small-note setting-help">
+          Domaine à autoriser dans Dropbox : <strong>ton-site.github.io</strong> ou ton domaine perso.
+        </p>
+      </section>
 
       <section class="panel-section">
         <div class="section-title-row">
@@ -89,6 +106,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="./app.js?v=2.3.0"></script>
+  <script src="./app.js?v=2.4.0"></script>
 </body>
 </html>

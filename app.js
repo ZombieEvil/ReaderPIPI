@@ -1,7 +1,7 @@
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 
 const state = {
   books: [],
@@ -11,6 +11,7 @@ const state = {
   renderToken: 0,
   zoom: Number(localStorage.getItem('pipiZoom') || 1),
   pdfRegistry: new Map(),
+  dropboxAppKey: localStorage.getItem('pipiDropboxAppKey') || '',
 };
 
 const elements = {
@@ -28,11 +29,15 @@ const elements = {
   chapterCount: document.getElementById('chapterCount'),
   zoomRange: document.getElementById('zoomRange'),
   rerenderBtn: document.getElementById('rerenderBtn'),
+  dropboxAppKeyInput: document.getElementById('dropboxAppKeyInput'),
+  saveDropboxKeyBtn: document.getElementById('saveDropboxKeyBtn'),
+  clearDropboxKeyBtn: document.getElementById('clearDropboxKeyBtn'),
 };
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 elements.zoomRange.value = String(state.zoom);
+syncDropboxKeyUi();
 
 bindEvents();
 renderLibrary();
@@ -84,9 +89,93 @@ function bindEvents() {
       setStatus('Aucun document à recharger.');
       return;
     }
+
+    if (state.activeSource.type === 'url') {
+      renderRemoteBrowserView(state.activeSource);
+      return;
+    }
+
     await renderPdf(state.activeSource);
   });
+
+  if (elements.saveDropboxKeyBtn) {
+    elements.saveDropboxKeyBtn.addEventListener('click', () => {
+      const nextKey = String(elements.dropboxAppKeyInput?.value || '').trim();
+      state.dropboxAppKey = nextKey;
+
+      if (nextKey) {
+        localStorage.setItem('pipiDropboxAppKey', nextKey);
+        setStatus('Clé Dropbox enregistrée. Recharge le chapitre distant si besoin.');
+      } else {
+        localStorage.removeItem('pipiDropboxAppKey');
+        setStatus('Clé Dropbox vide.');
+      }
+
+      resetDropboxEmbedder();
+      syncDropboxKeyUi();
+    });
+  }
+
+  if (elements.clearDropboxKeyBtn) {
+    elements.clearDropboxKeyBtn.addEventListener('click', () => {
+      state.dropboxAppKey = '';
+      localStorage.removeItem('pipiDropboxAppKey');
+      resetDropboxEmbedder();
+      syncDropboxKeyUi();
+      setStatus('Clé Dropbox effacée.');
+    });
+  }
 }
+
+function syncDropboxKeyUi() {
+  if (elements.dropboxAppKeyInput) {
+    elements.dropboxAppKeyInput.value = state.dropboxAppKey;
+  }
+}
+
+function resetDropboxEmbedder() {
+  const existing = document.getElementById('dropboxjs');
+  if (existing) existing.remove();
+
+  try {
+    delete window.Dropbox;
+  } catch (error) {
+    window.Dropbox = undefined;
+  }
+}
+
+function loadDropboxEmbedder(appKey) {
+  return new Promise((resolve, reject) => {
+    if (!appKey) {
+      reject(new Error('clé Dropbox absente'));
+      return;
+    }
+
+    const existing = document.getElementById('dropboxjs');
+    if (window.Dropbox && existing?.dataset.appKey === appKey) {
+      resolve(window.Dropbox);
+      return;
+    }
+
+    resetDropboxEmbedder();
+
+    const script = document.createElement('script');
+    script.src = 'https://www.dropbox.com/static/api/2/dropins.js';
+    script.id = 'dropboxjs';
+    script.type = 'text/javascript';
+    script.dataset.appKey = appKey;
+    script.onload = () => {
+      if (window.Dropbox?.embed) {
+        resolve(window.Dropbox);
+      } else {
+        reject(new Error('Dropbox Embedder indisponible'));
+      }
+    };
+    script.onerror = () => reject(new Error('chargement du script Dropbox impossible'));
+    document.body.appendChild(script);
+  });
+}
+
 
 async function handleFiles(fileList) {
   const files = Array.from(fileList || []);
@@ -531,14 +620,15 @@ function buildRemotePdfSource(label, rawUrl) {
     type: 'url',
     label,
     url: rawUrl,
+    isDropbox: remoteConfig.isDropbox,
+    sharedPreviewUrl: remoteConfig.sharedPreviewUrl || rawUrl,
     inlineUrls: remoteConfig.inlineUrls,
     fetchUrls: remoteConfig.fetchUrls,
     bestInlineUrl: remoteConfig.inlineUrls[0] || rawUrl,
     bestFetchUrl: remoteConfig.fetchUrls[0] || rawUrl,
     viewerUrls: {
-      direct: remoteConfig.inlineUrls[0] || rawUrl,
-      google: buildGoogleViewerUrl(remoteConfig.fetchUrls[0] || rawUrl),
-      googleAlt: buildGoogleViewerNgUrl(remoteConfig.fetchUrls[0] || rawUrl),
+      native: (remoteConfig.fetchUrls[0] || rawUrl),
+      preview: (remoteConfig.inlineUrls[0] || rawUrl),
     },
   };
 }
@@ -546,15 +636,40 @@ function buildRemotePdfSource(label, rawUrl) {
 async function openRemoteChapter(label, rawUrl) {
   const source = buildRemotePdfSource(label, rawUrl);
   state.activeSource = source;
-  renderRemoteBrowserView(source, 'google');
+  renderRemoteBrowserView(source);
 }
 
-function renderRemoteBrowserView(source, mode = 'google') {
+function getDefaultRemoteMode(source) {
+  if (source.isDropbox && state.dropboxAppKey) return 'dropbox';
+  return 'native';
+}
+
+function renderRemoteBrowserView(source, mode) {
   const modes = getRemoteViewerModes(source);
-  const activeMode = modes.find((entry) => entry.key === mode) || modes[0];
-  const iframeHtml = activeMode.kind === 'iframe'
-    ? `<iframe class="remote-frame" src="${escapeAttribute(activeMode.src)}" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>`
-    : `<div class="placeholder-card remote-inline-placeholder"><h3>Lecture PDF.js</h3><p>Ce mode charge le PDF directement dans le moteur du site. Il marche seulement si la source distante autorise ce chargement.</p><button id="launchPdfJsInline" class="primary-btn" type="button">Lancer PDF.js</button></div>`;
+  const activeMode = modes.find((entry) => entry.key === (mode || getDefaultRemoteMode(source))) || modes[0];
+
+  let viewerHtml = '';
+  if (activeMode.kind === 'iframe') {
+    viewerHtml = `<iframe class="remote-frame" src="${escapeAttribute(activeMode.src)}" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>`;
+  } else if (activeMode.kind === 'object') {
+    viewerHtml = `
+      <object class="remote-object" data="${escapeAttribute(activeMode.src)}#toolbar=0&navpanes=0&view=FitH" type="application/pdf">
+        <div class="placeholder-card remote-inline-placeholder">
+          <h3>Le navigateur n'a pas pu afficher ce PDF ici</h3>
+          <p>Essaie <strong>Dropbox intégré</strong>, <strong>Page source</strong> ou <strong>PDF.js</strong>. Certains serveurs forcent encore le téléchargement.</p>
+          <a class="secondary-btn" href="${escapeAttribute(source.bestInlineUrl)}" target="_blank" rel="noopener noreferrer">Ouvrir en nouvel onglet</a>
+        </div>
+      </object>
+    `;
+  } else if (activeMode.kind === 'dropbox-embed') {
+    viewerHtml = `<div id="dropboxEmbedTarget" class="dropbox-embed-host"><div class="placeholder-card remote-inline-placeholder"><h3>Chargement Dropbox…</h3><p>Le lecteur intégré Dropbox va s'afficher ici.</p></div></div>`;
+  } else {
+    viewerHtml = `<div class="placeholder-card remote-inline-placeholder"><h3>Lecture PDF.js</h3><p>Ce mode charge le PDF dans le moteur du site. Il marche seulement si la source distante autorise ce chargement.</p><button id="launchPdfJsInline" class="primary-btn" type="button">Lancer PDF.js</button></div>`;
+  }
+
+  const intro = source.isDropbox
+    ? `Le mode conseillé est <strong>${state.dropboxAppKey ? 'Dropbox intégré' : 'PDF natif'}</strong>. Firefox bloque la visionneuse Google embarquée, donc elle n'est plus utilisée ici.`
+    : `Le mode conseillé est <strong>PDF natif</strong>. Si la source distante bloque l'intégration, teste <strong>PDF.js</strong> ou <strong>Page source</strong>.`;
 
   elements.viewer.className = 'viewer';
   elements.viewer.innerHTML = `
@@ -562,16 +677,16 @@ function renderRemoteBrowserView(source, mode = 'google') {
       <div class="remote-reader-header">
         <div>
           <h4>${escapeHtml(source.label)}</h4>
-          <p class="small-note">Le mode conseillé est <strong>Lecture intégrée</strong>. Il évite le forçage au téléchargement quand le lien direct envoie un PDF en pièce jointe.</p>
+          <p class="small-note">${intro}</p>
         </div>
         <div class="remote-toolbar">
           ${modes.map((entry) => `<button class="${entry.key === activeMode.key ? 'primary-btn mode-btn active' : 'ghost-btn mode-btn'}" data-mode="${escapeAttribute(entry.key)}" type="button">${escapeHtml(entry.label)}</button>`).join('')}
           <a class="secondary-btn" href="${escapeAttribute(source.bestInlineUrl)}" target="_blank" rel="noopener noreferrer">Nouvel onglet</a>
         </div>
       </div>
-      ${iframeHtml}
+      ${viewerHtml}
       <div class="remote-note">
-        <strong>À savoir :</strong> si la zone reste vide, teste <em>Visionneuse secours</em> puis <em>Source directe</em>. Si seule la source distante bloque l’intégration, un site statique ne peut pas la forcer côté navigateur.
+        <strong>À savoir :</strong> un site statique comme GitHub Pages ne peut pas contourner un serveur qui interdit l'affichage intégré. Pour Dropbox, le mode <em>Dropbox intégré</em> est le plus propre si tu renseignes une clé Embedder.
       </div>
     </div>
   `;
@@ -589,52 +704,101 @@ function renderRemoteBrowserView(source, mode = 'google') {
     });
   }
 
+  if (activeMode.kind === 'dropbox-embed') {
+    const target = document.getElementById('dropboxEmbedTarget');
+    renderDropboxEmbed(target, source);
+  }
+
   setStatus(`${source.label} — ${activeMode.status}.`);
 }
 
 function getRemoteViewerModes(source) {
-  return [
+  const modes = [
     {
-      key: 'google',
-      label: 'Lecture intégrée',
-      kind: 'iframe',
-      src: source.viewerUrls.google,
-      status: 'lecture intégrée chargée',
-    },
-    {
-      key: 'googleAlt',
-      label: 'Visionneuse secours',
-      kind: 'iframe',
-      src: source.viewerUrls.googleAlt,
-      status: 'visionneuse secours chargée',
-    },
-    {
-      key: 'direct',
-      label: 'Source directe',
-      kind: 'iframe',
-      src: source.viewerUrls.direct,
-      status: 'source directe chargée',
-    },
-    {
-      key: 'pdfjs',
-      label: 'PDF.js',
-      kind: 'pdfjs',
-      status: 'mode PDF.js prêt',
+      key: 'native',
+      label: 'PDF natif',
+      kind: 'object',
+      src: source.viewerUrls.native,
+      status: 'mode PDF natif chargé',
     },
   ];
+
+  if (source.isDropbox) {
+    modes.push({
+      key: 'dropbox',
+      label: 'Dropbox intégré',
+      kind: 'dropbox-embed',
+      status: state.dropboxAppKey ? 'lecteur Dropbox intégré prêt' : 'clé Dropbox nécessaire',
+    });
+
+    modes.push({
+      key: 'preview',
+      label: 'Page Dropbox',
+      kind: 'iframe',
+      src: source.sharedPreviewUrl,
+      status: 'page Dropbox chargée',
+    });
+  } else {
+    modes.push({
+      key: 'preview',
+      label: 'Page source',
+      kind: 'iframe',
+      src: source.viewerUrls.preview,
+      status: 'page source chargée',
+    });
+  }
+
+  modes.push({
+    key: 'pdfjs',
+    label: 'PDF.js',
+    kind: 'pdfjs',
+    status: 'mode PDF.js prêt',
+  });
+
+  return modes;
 }
 
-function buildGoogleViewerUrl(rawUrl) {
-  return `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(rawUrl)}`;
-}
+async function renderDropboxEmbed(target, source) {
+  if (!target) return;
 
-function buildGoogleViewerNgUrl(rawUrl) {
-  return `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(rawUrl)}`;
+  if (!state.dropboxAppKey) {
+    target.innerHTML = `
+      <div class="placeholder-card remote-inline-placeholder">
+        <h3>Clé Dropbox requise</h3>
+        <p>Pour lire ce chapitre Dropbox directement dans ton site GitHub Pages, ajoute une clé <strong>Dropbox Embedder</strong> dans la barre latérale puis recharge ce chapitre.</p>
+        <p class="small-note">Une fois la clé créée dans Dropbox, autorise ton domaine GitHub Pages dans la liste blanche des domaines de l'app.</p>
+      </div>
+    `;
+    return;
+  }
+
+  try {
+    target.innerHTML = '<div class="placeholder-card remote-inline-placeholder"><h3>Chargement Dropbox…</h3><p>Préparation du lecteur intégré.</p></div>';
+    const Dropbox = await loadDropboxEmbedder(state.dropboxAppKey);
+    target.innerHTML = '';
+    Dropbox.embed({
+      link: source.sharedPreviewUrl,
+      file: {
+        zoom: 'fit',
+      },
+    }, target);
+  } catch (error) {
+    console.error(error);
+    target.innerHTML = `
+      <div class="placeholder-card remote-inline-placeholder">
+        <h3>Dropbox intégré indisponible</h3>
+        <p>${escapeHtml(error.message || 'Impossible de charger Dropbox Embedder.')}</p>
+        <p class="small-note">Vérifie la clé Dropbox, le domaine autorisé dans Dropbox et recharge la page.</p>
+      </div>
+    `;
+  }
 }
 
 function buildRemoteConfig(rawUrl) {
   const inlineUrls = [];
   const fetchUrls = [];
+  let sharedPreviewUrl = '';
+  let isDropbox = false;
 
   const pushUnique = (list, url) => {
     if (url && !list.includes(url)) list.push(url);
@@ -643,14 +807,15 @@ function buildRemoteConfig(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
     const host = parsed.hostname.toLowerCase();
-    const isDropbox = host === 'www.dropbox.com' || host === 'dl.dropbox.com' || host === 'dropbox.com' || host === 'dl.dropboxusercontent.com';
+    isDropbox = host === 'www.dropbox.com' || host === 'dl.dropbox.com' || host === 'dropbox.com' || host === 'dl.dropboxusercontent.com';
 
     if (isDropbox) {
       const previewUrl = new URL(parsed.toString());
       previewUrl.hostname = 'www.dropbox.com';
       previewUrl.searchParams.set('dl', '0');
       previewUrl.searchParams.delete('raw');
-      pushUnique(inlineUrls, previewUrl.toString());
+      sharedPreviewUrl = previewUrl.toString();
+      pushUnique(inlineUrls, sharedPreviewUrl);
 
       const rawPreviewUrl = new URL(parsed.toString());
       rawPreviewUrl.hostname = 'www.dropbox.com';
@@ -700,6 +865,8 @@ function buildRemoteConfig(rawUrl) {
   }
 
   return {
+    isDropbox,
+    sharedPreviewUrl,
     inlineUrls: inlineUrls.filter(Boolean),
     fetchUrls: fetchUrls.filter(Boolean),
   };
