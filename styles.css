@@ -413,6 +413,7 @@ button:hover,
   margin-bottom: 0;
 }
 
+
 .reader-shell {
   position: fixed;
   inset: 0;
@@ -530,11 +531,9 @@ button:hover,
 .reader-stage {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
-  padding: 14px;
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
+  overflow: auto;
+  padding: 0;
+  display: block;
 }
 
 .reader-stage.theme-midnight {
@@ -548,7 +547,9 @@ button:hover,
 }
 
 .reader-stage.theme-paper .reader-fallback,
-.reader-stage.theme-paper ~ .reader-notice {
+.reader-stage.theme-paper ~ .reader-notice,
+.reader-stage.theme-paper .reader-loader,
+.reader-stage.theme-paper .reader-page-label {
   color: #16253b;
 }
 
@@ -556,9 +557,82 @@ button:hover,
   background: #000;
 }
 
+.reader-image-mode,
+.reader-native-mode {
+  min-height: 100%;
+}
+
+.reader-image-mode {
+  padding: 0;
+}
+
+.reader-canvas-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+}
+
+.reader-page {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0;
+  line-height: 0;
+  position: relative;
+}
+
+.reader-page + .reader-page {
+  margin-top: -2px;
+}
+
+.reader-page-canvas {
+  display: block;
+  width: min(100%, 1400px);
+  height: auto;
+  margin: 0 auto;
+  background: transparent;
+  image-rendering: auto;
+  box-shadow: none;
+}
+
+.reader-loader {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text);
+  text-align: center;
+  padding: 40px 16px;
+}
+
+.loader-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #4fa9ff, #74d4ff);
+  box-shadow: 0 0 0 10px rgba(89, 191, 255, 0.12);
+  animation: pulse 1.1s infinite ease-in-out;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.84); opacity: 0.72; }
+}
+
+.reader-native-mode {
+  padding: 12px;
+}
+
 .reader-frame {
   width: 100%;
-  height: 100%;
+  height: calc(100vh - 260px);
   border: 0;
   border-radius: 18px;
   background: transparent;
@@ -566,7 +640,7 @@ button:hover,
 
 .reader-fallback {
   width: min(720px, 100%);
-  margin: auto;
+  margin: 32px auto;
   text-align: center;
   padding: 28px;
   border-radius: 20px;
@@ -577,7 +651,6 @@ button:hover,
 .reader-fallback h3 {
   margin-top: 0;
 }
-
 @media (max-width: 1160px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -635,6 +708,6 @@ button:hover,
   }
 
   .reader-stage {
-    padding: 8px;
+    padding: 0;
   }
 }

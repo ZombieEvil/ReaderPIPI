@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pipi Reader Web</title>
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
-  <link rel="stylesheet" href="./styles.css?v=3.0.0" />
+  <link rel="stylesheet" href="./styles.css?v=3.1.0" />
 </head>
 <body>
   <div id="homeShell" class="app-shell">
@@ -15,7 +15,7 @@
         <div>
           <h1>Pipi Reader Web</h1>
           <p>Lecteur .pipi + PDF</p>
-          <span class="version-badge">v3.0 lecteur dédié</span>
+          <span class="version-badge">v3.1 pages intégrées</span>
         </div>
       </div>
 
@@ -65,13 +65,12 @@
       </section>
 
       <section id="welcomeCard" class="placeholder-card">
-        <h3>Nouvelle lecture dédiée</h3>
+        <h3>Nouvelle lecture pages par pages intégrées</h3>
         <p>
-          Chaque clic sur un chapitre ouvre maintenant une <strong>vue lecteur dédiée</strong>, plus proche d’un site de scans :
-          sélecteur de chapitre, navigation précédent/suivant, arrière-plan, plein écran et lecteur PDF natif.
+          Cette version essaie d’afficher les <strong>pages du PDF directement dans le site</strong>, sans les séparations moches du lecteur natif.
         </p>
         <p>
-          Les <strong>.pipi</strong> en clair et les <strong>.pipi chiffrés compatibles avec la clé connue de l’app Pipi</strong> restent pris en charge.
+          Si une source distante refuse le chargement JavaScript, le lecteur peut encore basculer sur un mode natif de secours.
         </p>
       </section>
     </main>
@@ -100,7 +99,8 @@
         <button id="readerPrevBtn" class="secondary-btn reader-nav-btn" type="button">Précédent</button>
         <button id="readerLatestBtn" class="ghost-btn reader-nav-btn" type="button">Dernier chapitre</button>
         <button id="readerNextBtn" class="primary-btn reader-nav-btn" type="button">Suivant</button>
-        <button id="readerAltSourceBtn" class="ghost-btn" type="button">Autre source</button>
+        <button id="readerImagesBtn" class="primary-btn" type="button">Pages intégrées</button>
+        <button id="readerNativeBtn" class="ghost-btn" type="button">PDF natif</button>
         <a id="readerNewTabLink" class="ghost-btn" href="#" target="_blank" rel="noopener noreferrer">Nouvel onglet</a>
         <button id="readerFullscreenBtn" class="outline-btn fullscreen-btn" type="button">Plein écran</button>
       </div>
@@ -109,17 +109,29 @@
     <div id="readerNotice" class="reader-notice">Lecture dédiée prête.</div>
 
     <div id="readerStage" class="reader-stage theme-midnight">
-      <iframe id="readerFrame" class="reader-frame" title="Lecteur PDF natif" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>
+      <div id="readerImageMode" class="reader-image-mode">
+        <div id="readerLoader" class="reader-loader">
+          <div class="loader-dot"></div>
+          <strong>Chargement du chapitre…</strong>
+          <span id="readerLoaderText">Préparation du PDF…</span>
+        </div>
+        <div id="readerCanvasStack" class="reader-canvas-stack hidden"></div>
+      </div>
+
+      <div id="readerNativeMode" class="reader-native-mode hidden">
+        <iframe id="readerFrame" class="reader-frame" title="Lecteur PDF natif" loading="lazy" referrerpolicy="no-referrer" allowfullscreen></iframe>
+      </div>
+
       <div id="readerFallback" class="reader-fallback hidden">
-        <h3>Impossible d’ouvrir ce chapitre dans le lecteur intégré</h3>
+        <h3>Impossible d’afficher les pages directement dans le site</h3>
         <p>
-          Cette source refuse probablement l’intégration directe. Essaie <strong>Autre source</strong> ou <strong>Nouvel onglet</strong>.
+          La source distante refuse probablement le chargement JavaScript du PDF. Dans ce cas, utilise <strong>PDF natif</strong> ou <strong>Nouvel onglet</strong>.
         </p>
       </div>
     </div>
   </section>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-  <script src="./app.js?v=3.0.0"></script>
+  <script src="./app.js?v=3.1.0" type="module"></script>
 </body>
 </html>

@@ -1,7 +1,11 @@
+import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+
 const DELIMITER = '%%%-%%%';
 const APP_PIPI_KEY = 'var i = 14226-11420334e10';
 const MIN_PIPI_DELIMITER_COUNT = 7;
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 
 const state = {
   books: [],
@@ -10,6 +14,9 @@ const state = {
   pdfRegistry: new Map(),
   reader: {
     candidateIndex: 0,
+    renderToken: 0,
+    mode: 'images',
+    activeSourceUrl: '',
   },
 };
 
@@ -35,14 +42,20 @@ const elements = {
   readerPrevBtn: document.getElementById('readerPrevBtn'),
   readerLatestBtn: document.getElementById('readerLatestBtn'),
   readerNextBtn: document.getElementById('readerNextBtn'),
-  readerAltSourceBtn: document.getElementById('readerAltSourceBtn'),
+  readerImagesBtn: document.getElementById('readerImagesBtn'),
+  readerNativeBtn: document.getElementById('readerNativeBtn'),
   readerNewTabLink: document.getElementById('readerNewTabLink'),
   readerFullscreenBtn: document.getElementById('readerFullscreenBtn'),
   backToLibraryBtn: document.getElementById('backToLibraryBtn'),
   readerNotice: document.getElementById('readerNotice'),
   readerStage: document.getElementById('readerStage'),
+  readerImageMode: document.getElementById('readerImageMode'),
+  readerNativeMode: document.getElementById('readerNativeMode'),
   readerFrame: document.getElementById('readerFrame'),
   readerFallback: document.getElementById('readerFallback'),
+  readerLoader: document.getElementById('readerLoader'),
+  readerLoaderText: document.getElementById('readerLoaderText'),
+  readerCanvasStack: document.getElementById('readerCanvasStack'),
 };
 
 bindEvents();
@@ -84,7 +97,9 @@ function bindEvents() {
     state.activeBookId = null;
     state.activeChapterId = null;
     state.pdfRegistry.clear();
+    state.reader.renderToken += 1;
     elements.readerFrame.removeAttribute('src');
+    elements.readerCanvasStack.innerHTML = '';
     renderLibrary();
     renderHome();
     setStatus('Bibliothèque vidée.');
@@ -108,13 +123,8 @@ function bindEvents() {
     openChapterInReader(activeBook.id, elements.readerChapterSelect.value);
   });
 
-  elements.readerPrevBtn.addEventListener('click', () => {
-    moveReaderChapter(-1);
-  });
-
-  elements.readerNextBtn.addEventListener('click', () => {
-    moveReaderChapter(1);
-  });
+  elements.readerPrevBtn.addEventListener('click', () => moveReaderChapter(-1));
+  elements.readerNextBtn.addEventListener('click', () => moveReaderChapter(1));
 
   elements.readerLatestBtn.addEventListener('click', () => {
     const activeBook = getActiveBook();
@@ -123,14 +133,21 @@ function bindEvents() {
     openChapterInReader(activeBook.id, latest.id);
   });
 
-  elements.readerAltSourceBtn.addEventListener('click', () => {
-    state.reader.candidateIndex += 1;
+  elements.readerImagesBtn.addEventListener('click', () => {
+    const book = getActiveBook();
+    if (!book) return;
+    setSavedReaderMode(book, 'images');
     renderReader();
   });
 
-  elements.backToLibraryBtn.addEventListener('click', () => {
-    closeReader();
+  elements.readerNativeBtn.addEventListener('click', () => {
+    const book = getActiveBook();
+    if (!book) return;
+    setSavedReaderMode(book, 'native');
+    renderReader();
   });
+
+  elements.backToLibraryBtn.addEventListener('click', () => closeReader());
 
   elements.readerFullscreenBtn.addEventListener('click', async () => {
     try {
@@ -177,12 +194,19 @@ function bindEvents() {
     }
   });
 
+  window.addEventListener('resize', debounce(() => {
+    if (!elements.readerShell.classList.contains('hidden') && state.reader.mode === 'images') {
+      renderReader();
+    }
+  }, 250));
+
   elements.readerFrame.addEventListener('load', () => {
+    if (state.reader.mode !== 'native') return;
     elements.readerFallback.classList.add('hidden');
     const activeBook = getActiveBook();
     const chapter = getActiveChapter(activeBook);
     if (chapter) {
-      elements.readerNotice.textContent = `${chapter.title} — lecteur natif chargé.`;
+      elements.readerNotice.textContent = `${chapter.title} — lecteur PDF natif chargé.`;
     }
   });
 }
@@ -345,7 +369,7 @@ function detectPipiPayload(text) {
 
 function decryptWithKnownPipiKey(cipherText) {
   try {
-    const decrypted = CryptoJS.AES.decrypt(cipherText, APP_PIPI_KEY).toString(CryptoJS.enc.Utf8);
+    const decrypted = window.CryptoJS.AES.decrypt(cipherText, APP_PIPI_KEY).toString(window.CryptoJS.enc.Utf8);
     return decrypted?.trim() || '';
   } catch (error) {
     console.error('Déchiffrement .pipi impossible', error);
@@ -541,9 +565,7 @@ function renderChapters(book) {
     openBtn.className = 'primary-btn';
     openBtn.type = 'button';
     openBtn.textContent = 'Lire';
-    openBtn.addEventListener('click', () => {
-      openChapterInReader(book.id, chapter.id);
-    });
+    openBtn.addEventListener('click', () => openChapterInReader(book.id, chapter.id));
     actions.appendChild(openBtn);
 
     if (chapter.url) {
@@ -578,6 +600,7 @@ function openChapterInReader(bookId, chapterId, replace = false) {
 }
 
 function closeReader(replaceOnly = false) {
+  state.reader.renderToken += 1;
   if (replaceOnly) {
     history.replaceState(null, '', '#');
   } else if (location.hash.startsWith('#reader')) {
@@ -629,14 +652,13 @@ function parseRoute() {
   };
 }
 
-function renderReader() {
+async function renderReader() {
   const book = getActiveBook();
   const chapter = getActiveChapter(book);
 
   if (!book || !chapter) {
     elements.readerNotice.textContent = 'Impossible de charger ce chapitre.';
-    elements.readerFallback.classList.remove('hidden');
-    elements.readerFrame.removeAttribute('src');
+    showReaderFallback();
     return;
   }
 
@@ -648,31 +670,150 @@ function renderReader() {
 
   if (!source) {
     elements.readerNotice.textContent = 'Aucune source exploitable pour ce chapitre.';
-    elements.readerFallback.classList.remove('hidden');
-    elements.readerFrame.removeAttribute('src');
+    showReaderFallback();
     return;
   }
 
   const candidates = source.nativeCandidates?.length ? source.nativeCandidates : [source.url].filter(Boolean);
   if (!candidates.length) {
     elements.readerNotice.textContent = 'Aucune URL intégrable trouvée.';
-    elements.readerFallback.classList.remove('hidden');
-    elements.readerFrame.removeAttribute('src');
+    showReaderFallback();
     return;
   }
 
   const candidateIndex = state.reader.candidateIndex % candidates.length;
-  const activeSrc = appendPdfFragment(candidates[candidateIndex]);
+  const activeSrc = candidates[candidateIndex];
+  state.reader.activeSourceUrl = activeSrc;
+  elements.readerNewTabLink.href = source.newTabUrl || activeSrc;
 
-  elements.readerFrame.src = activeSrc;
-  elements.readerNewTabLink.href = source.newTabUrl || candidates[0];
-  elements.readerFallback.classList.add('hidden');
+  const preferredMode = getSavedReaderMode(book);
+  setReaderModeUi(preferredMode);
 
-  const suffix = candidates.length > 1
-    ? `Source ${candidateIndex + 1}/${candidates.length}.`
-    : 'Source principale.';
-  elements.readerNotice.textContent = `${book.title} — ${chapter.title} — lecteur natif. ${suffix}`;
+  const sourceText = candidates.length > 1 ? `Source ${candidateIndex + 1}/${candidates.length}.` : 'Source principale.';
   setStatus(`${chapter.title} ouvert dans la vue lecteur dédiée.`);
+
+  if (preferredMode === 'native') {
+    showNativeReader(activeSrc, `${book.title} — ${chapter.title} — PDF natif. ${sourceText}`);
+    return;
+  }
+
+  try {
+    await showIntegratedPages(activeSrc, book, chapter, sourceText);
+  } catch (error) {
+    console.error('Rendu intégré impossible', error);
+    const isLocal = source.kind === 'file';
+    if (isLocal) {
+      showReaderFallback(`Le PDF local n’a pas pu être rendu en pages intégrées : ${error.message}`);
+      return;
+    }
+
+    showReaderFallback('Cette source distante refuse probablement le chargement direct du PDF dans JavaScript. Passe en mode PDF natif.');
+    showNativeReader(activeSrc, `${book.title} — ${chapter.title} — fallback PDF natif.`);
+  }
+}
+
+async function showIntegratedPages(sourceUrl, book, chapter, sourceText) {
+  const token = ++state.reader.renderToken;
+  state.reader.mode = 'images';
+  setReaderModeUi('images');
+  elements.readerFallback.classList.add('hidden');
+  elements.readerNativeMode.classList.add('hidden');
+  elements.readerImageMode.classList.remove('hidden');
+  elements.readerLoader.classList.remove('hidden');
+  elements.readerCanvasStack.classList.add('hidden');
+  elements.readerCanvasStack.innerHTML = '';
+  elements.readerFrame.removeAttribute('src');
+  updateLoaderText('Ouverture du PDF…');
+
+  const loadingTask = pdfjsLib.getDocument({
+    url: sourceUrl,
+    withCredentials: false,
+    enableXfa: false,
+    useWorkerFetch: true,
+  });
+
+  let pdfDocument;
+  try {
+    pdfDocument = await loadingTask.promise;
+  } catch (error) {
+    throw new Error(readablePdfError(error));
+  }
+
+  if (token !== state.reader.renderToken) {
+    try { await pdfDocument.destroy(); } catch {}
+    return;
+  }
+
+  const stageWidth = Math.max(320, elements.readerStage.clientWidth - 8);
+  const targetWidth = Math.min(1400, stageWidth);
+  const deviceRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+    if (token !== state.reader.renderToken) {
+      try { await pdfDocument.destroy(); } catch {}
+      return;
+    }
+
+    updateLoaderText(`Rendu de la page ${pageNumber} / ${pdfDocument.numPages}…`);
+    const page = await pdfDocument.getPage(pageNumber);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const cssScale = targetWidth / baseViewport.width;
+    const viewport = page.getViewport({ scale: cssScale * deviceRatio });
+
+    const wrapper = document.createElement('section');
+    wrapper.className = 'reader-page';
+    wrapper.dataset.page = String(pageNumber);
+
+    const canvas = document.createElement('canvas');
+    canvas.className = 'reader-page-canvas';
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    canvas.style.width = `${Math.floor(baseViewport.width * cssScale)}px`;
+    canvas.style.height = `${Math.floor(baseViewport.height * cssScale)}px`;
+    wrapper.appendChild(canvas);
+
+    elements.readerCanvasStack.appendChild(wrapper);
+
+    const context = canvas.getContext('2d', { alpha: false });
+    await page.render({
+      canvasContext: context,
+      viewport,
+    }).promise;
+  }
+
+  if (token !== state.reader.renderToken) {
+    try { await pdfDocument.destroy(); } catch {}
+    return;
+  }
+
+  elements.readerLoader.classList.add('hidden');
+  elements.readerCanvasStack.classList.remove('hidden');
+  elements.readerNotice.textContent = `${book.title} — ${chapter.title} — pages intégrées chargées. ${sourceText}`;
+  try { await pdfDocument.destroy(); } catch {}
+}
+
+function showNativeReader(sourceUrl, notice) {
+  state.reader.mode = 'native';
+  setReaderModeUi('native');
+  elements.readerImageMode.classList.add('hidden');
+  elements.readerNativeMode.classList.remove('hidden');
+  elements.readerFallback.classList.add('hidden');
+  elements.readerCanvasStack.innerHTML = '';
+  elements.readerFrame.src = appendPdfFragment(sourceUrl);
+  elements.readerNotice.textContent = notice;
+}
+
+function showReaderFallback(message = '') {
+  elements.readerImageMode.classList.add('hidden');
+  elements.readerNativeMode.classList.add('hidden');
+  elements.readerLoader.classList.add('hidden');
+  elements.readerCanvasStack.innerHTML = '';
+  elements.readerFrame.removeAttribute('src');
+  elements.readerFallback.classList.remove('hidden');
+  if (message) {
+    const paragraph = elements.readerFallback.querySelector('p');
+    if (paragraph) paragraph.textContent = message;
+  }
 }
 
 function renderReaderHeader(book, chapter) {
@@ -704,6 +845,13 @@ function moveReaderChapter(delta) {
   }
 }
 
+function setReaderModeUi(mode) {
+  elements.readerImagesBtn.classList.toggle('primary-btn', mode === 'images');
+  elements.readerImagesBtn.classList.toggle('ghost-btn', mode !== 'images');
+  elements.readerNativeBtn.classList.toggle('primary-btn', mode === 'native');
+  elements.readerNativeBtn.classList.toggle('ghost-btn', mode !== 'native');
+}
+
 function renderReaderTheme(book) {
   const theme = getSavedReaderTheme(book);
   elements.readerStage.classList.remove('theme-midnight', 'theme-paper', 'theme-black');
@@ -725,6 +873,15 @@ function getSavedReaderTheme(book) {
 
 function getReaderThemeStorageKey(book) {
   return `pipi-reader-theme:${normalizeKey(book?.title || 'book')}`;
+}
+
+function getSavedReaderMode(book) {
+  const saved = localStorage.getItem(`pipi-reader-mode:${book?.id || ''}`);
+  return ['images', 'native'].includes(saved) ? saved : 'images';
+}
+
+function setSavedReaderMode(book, mode) {
+  localStorage.setItem(`pipi-reader-mode:${book?.id || ''}`, mode);
 }
 
 function getSavedLastChapterId(book) {
@@ -791,24 +948,9 @@ function buildRemoteConfig(rawUrl) {
       rawOnUserContent.searchParams.delete('dl');
       rawOnUserContent.searchParams.set('raw', '1');
       push(rawOnUserContent.toString());
-
-      const previewUrl = new URL(parsed.toString());
-      previewUrl.hostname = 'www.dropbox.com';
-      previewUrl.searchParams.set('dl', '0');
-      previewUrl.searchParams.delete('raw');
-      push(previewUrl.toString());
     }
 
-    const genericRaw = new URL(parsed.toString());
-    genericRaw.searchParams.delete('dl');
-    genericRaw.searchParams.set('raw', '1');
-    push(genericRaw.toString());
-
     push(parsed.toString());
-
-    const inlineish = new URL(parsed.toString());
-    inlineish.searchParams.set('dl', '0');
-    push(inlineish.toString());
   } catch (error) {
     console.warn('Impossible de construire des variantes distantes', error);
     push(rawUrl);
@@ -859,9 +1001,19 @@ function setStatus(message) {
   elements.statusBar.textContent = message;
 }
 
+function updateLoaderText(message) {
+  elements.readerLoaderText.textContent = message;
+}
+
 function appendPdfFragment(url) {
   if (!url) return '';
   return url.includes('#') ? url : `${url}#toolbar=1&view=FitH`;
+}
+
+function readablePdfError(error) {
+  const message = String(error?.message || error || 'Erreur inconnue');
+  if (/fetch|network|cors|failed to fetch/i.test(message)) return 'chargement refusé par la source distante';
+  return message;
 }
 
 function normalizeKey(value) {
@@ -884,4 +1036,12 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll('`', '&#96;');
+}
+
+function debounce(fn, delay = 200) {
+  let timer = 0;
+  return (...args) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => fn(...args), delay);
+  };
 }
